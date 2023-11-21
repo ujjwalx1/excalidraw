@@ -6,7 +6,11 @@ import {
 } from "../../packages/excalidraw/tests/test-utils";
 import ExcalidrawApp from "../App";
 import { API } from "../../packages/excalidraw/tests/helpers/api";
-import { createUndoAction } from "../../packages/excalidraw/actions/actionHistory";
+import {
+  createRedoAction,
+  createUndoAction,
+} from "../../packages/excalidraw/actions/actionHistory";
+import { mutateElement } from "../../packages/excalidraw";
 const { h } = window;
 
 Object.defineProperty(window, "crypto", {
@@ -68,38 +72,108 @@ vi.mock("socket.io-client", () => {
 });
 
 describe("collaboration", () => {
-  it("creating room should reset deleted elements", async () => {
+  it("creating room should reset deleted elements while allowing undo", async () => {
     await render(<ExcalidrawApp />);
     // To update the scene with deleted elements before starting collab
-    updateSceneData({
-      elements: [
-        API.createElement({ type: "rectangle", id: "A" }),
-        API.createElement({
-          type: "rectangle",
-          id: "B",
-          isDeleted: true,
-        }),
-      ],
+    const rect1 = API.createElement({ type: "rectangle", id: "A" });
+    const rect2 = API.createElement({
+      type: "rectangle",
+      id: "B",
     });
+
+    updateSceneData({
+      elements: [rect1, rect2],
+      commitToStore: true,
+    });
+
+    updateSceneData({
+      elements: [rect1, mutateElement(rect2, { isDeleted: true })],
+      commitToStore: true,
+    });
+
     await waitFor(() => {
+      expect(API.getUndoStack().length).toBe(2);
+      expect(API.getSnapshot()).toEqual([
+        expect.objectContaining({ id: "A" }),
+        expect.objectContaining({ id: "B", isDeleted: true }),
+      ]);
       expect(h.elements).toEqual([
         expect.objectContaining({ id: "A" }),
         expect.objectContaining({ id: "B", isDeleted: true }),
       ]);
-      expect(API.getStateHistory().length).toBe(1);
     });
     window.collab.startCollaboration(null);
     await waitFor(() => {
+      expect(API.getUndoStack().length).toBe(2);
+      // We never delete from the local store as it is used for correct diff calculation
+      expect(API.getSnapshot()).toEqual([
+        expect.objectContaining({ id: "A" }),
+        expect.objectContaining({ id: "B", isDeleted: true }),
+      ]);
       expect(h.elements).toEqual([expect.objectContaining({ id: "A" })]);
-      expect(API.getStateHistory().length).toBe(1);
     });
 
     const undoAction = createUndoAction(h.history);
-    // noop
     h.app.actionManager.executeAction(undoAction);
+
+    // Inability to undo your own deletions (and lose data) is a bigger factor than
+    // potentially saving sensitive data into a backup service
     await waitFor(() => {
-      expect(h.elements).toEqual([expect.objectContaining({ id: "A" })]);
-      expect(API.getStateHistory().length).toBe(1);
+      expect(API.getUndoStack().length).toBe(1);
+      expect(API.getSnapshot()).toEqual([
+        expect.objectContaining({ id: "A" }),
+        expect.objectContaining({ id: "B", isDeleted: false }),
+      ]);
+      expect(h.elements).toEqual([
+        expect.objectContaining({ id: "A" }),
+        expect.objectContaining({ id: "B", isDeleted: false }),
+      ]);
+    });
+
+    h.app.actionManager.executeAction(undoAction);
+
+    await waitFor(() => {
+      expect(h.history.isUndoStackEmpty).toBeTruthy();
+      expect(API.getRedoStack().length).toBe(2);
+      expect(API.getSnapshot()).toEqual([
+        expect.objectContaining({ id: "A", isDeleted: true }),
+        expect.objectContaining({ id: "B", isDeleted: true }),
+      ]);
+      expect(h.elements).toEqual([
+        expect.objectContaining({ id: "A", isDeleted: true }),
+        expect.objectContaining({ id: "B", isDeleted: true }),
+      ]);
+    });
+
+    const redoAction = createRedoAction(h.history);
+    h.app.actionManager.executeAction(redoAction);
+
+    await waitFor(() => {
+      expect(API.getUndoStack().length).toBe(1);
+      expect(API.getRedoStack().length).toBe(1);
+      expect(API.getSnapshot()).toEqual([
+        expect.objectContaining({ id: "A", isDeleted: false }),
+        expect.objectContaining({ id: "B", isDeleted: false }),
+      ]);
+      expect(h.elements).toEqual([
+        expect.objectContaining({ id: "A", isDeleted: false }),
+        expect.objectContaining({ id: "B", isDeleted: false }),
+      ]);
+    });
+
+    h.app.actionManager.executeAction(redoAction);
+
+    await waitFor(() => {
+      expect(API.getUndoStack().length).toBe(2);
+      expect(API.getSnapshot()).toEqual([
+        expect.objectContaining({ id: "A", isDeleted: false }),
+        expect.objectContaining({ id: "B", isDeleted: true }),
+      ]);
+      expect(h.history.isRedoStackEmpty).toBeTruthy();
+      expect(h.elements).toEqual([
+        expect.objectContaining({ id: "A", isDeleted: false }),
+        expect.objectContaining({ id: "B", isDeleted: true }),
+      ]);
     });
   });
 });

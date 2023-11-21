@@ -15,6 +15,14 @@ Please add the latest change on the top under the correct section.
 
 - Expose `getVisibleSceneBounds` helper to get scene bounds of visible canvas area. [#7450](https://github.com/excalidraw/excalidraw/pull/7450)
 
+### Features
+
+- Support for multiplayer undo / redo [#7348](https://github.com/excalidraw/excalidraw/pull/7348).
+
+### Breaking Changes
+
+- Renamed required `updatedScene` parameter from `commitToHistory` into `commitToStore` [#7348](https://github.com/excalidraw/excalidraw/pull/7348).
+
 ### Breaking Changes
 
 - `appState.openDialog` type was changed from `null | string` to `null | { name: string }`. [#7336](https://github.com/excalidraw/excalidraw/pull/7336)
@@ -36,8 +44,6 @@ define: {
 ### Fixes
 
 - Disable caching bounds for arrow labels [#7343](https://github.com/excalidraw/excalidraw/pull/7343)
-
----
 
 ## 0.17.0 (2023-11-14)
 

@@ -1,62 +1,43 @@
-import { Action, ActionResult } from "./types";
+import { Action, ActionResult, StoreAction } from "./types";
 import { UndoIcon, RedoIcon } from "../components/icons";
 import { ToolButton } from "../components/ToolButton";
 import { t } from "../i18n";
-import History, { HistoryEntry } from "../history";
-import { ExcalidrawElement } from "../element/types";
+import { History } from "../history";
 import { AppState } from "../types";
 import { KEYS } from "../keys";
-import { newElementWith } from "../element/mutateElement";
-import { fixBindingsAfterDeletion } from "../element/binding";
 import { arrayToMap } from "../utils";
 import { isWindows } from "../constants";
+import { ExcalidrawElement } from "../element/types";
 
 const writeData = (
-  prevElements: readonly ExcalidrawElement[],
-  appState: AppState,
-  updater: () => HistoryEntry | null,
+  appState: Readonly<AppState>,
+  updater: () => [Map<string, ExcalidrawElement>, AppState] | void,
 ): ActionResult => {
-  const commitToHistory = false;
   if (
     !appState.multiElement &&
     !appState.resizingElement &&
     !appState.editingElement &&
     !appState.draggingElement
   ) {
-    const data = updater();
-    if (data === null) {
-      return { commitToHistory };
+    const result = updater();
+
+    if (!result) {
+      return { storeAction: StoreAction.NONE };
     }
 
-    const prevElementMap = arrayToMap(prevElements);
-    const nextElements = data.elements;
-    const nextElementMap = arrayToMap(nextElements);
-
-    const deletedElements = prevElements.filter(
-      (prevElement) => !nextElementMap.has(prevElement.id),
-    );
-    const elements = nextElements
-      .map((nextElement) =>
-        newElementWith(
-          prevElementMap.get(nextElement.id) || nextElement,
-          nextElement,
-        ),
-      )
-      .concat(
-        deletedElements.map((prevElement) =>
-          newElementWith(prevElement, { isDeleted: true }),
-        ),
-      );
-    fixBindingsAfterDeletion(elements, deletedElements);
+    // TODO_UNDO: worth detecting z-index deltas or do we just order based on fractional indices?
+    // TODO_UNDO: fractional index ordering needs to be part of undo itself, as if it result in no changes, we want to iterate to the next undo
+    const [nextElementsMap, nextAppState] = result;
+    const nextElements = Array.from(nextElementsMap.values());
 
     return {
-      elements,
-      appState: { ...appState, ...data.appState },
-      commitToHistory,
-      syncHistory: true,
+      appState: nextAppState,
+      elements: nextElements,
+      storeAction: StoreAction.UPDATE,
     };
   }
-  return { commitToHistory };
+
+  return { storeAction: StoreAction.NONE };
 };
 
 type ActionCreator = (history: History) => Action;
@@ -65,7 +46,7 @@ export const createUndoAction: ActionCreator = (history) => ({
   name: "undo",
   trackEvent: { category: "history" },
   perform: (elements, appState) =>
-    writeData(elements, appState, () => history.undoOnce()),
+    writeData(appState, () => history.undo(arrayToMap(elements), appState)),
   keyTest: (event) =>
     event[KEYS.CTRL_OR_CMD] &&
     event.key.toLowerCase() === KEYS.Z &&
@@ -77,16 +58,16 @@ export const createUndoAction: ActionCreator = (history) => ({
       aria-label={t("buttons.undo")}
       onClick={updateData}
       size={data?.size || "medium"}
+      disabled={history.isUndoStackEmpty}
     />
   ),
-  commitToHistory: () => false,
 });
 
 export const createRedoAction: ActionCreator = (history) => ({
   name: "redo",
   trackEvent: { category: "history" },
   perform: (elements, appState) =>
-    writeData(elements, appState, () => history.redoOnce()),
+    writeData(appState, () => history.redo(arrayToMap(elements), appState)),
   keyTest: (event) =>
     (event[KEYS.CTRL_OR_CMD] &&
       event.shiftKey &&
@@ -99,7 +80,7 @@ export const createRedoAction: ActionCreator = (history) => ({
       aria-label={t("buttons.redo")}
       onClick={updateData}
       size={data?.size || "medium"}
+      disabled={history.isRedoStackEmpty}
     />
   ),
-  commitToHistory: () => false,
 });
