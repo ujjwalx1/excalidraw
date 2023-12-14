@@ -1,6 +1,6 @@
 import { ENV } from "./constants";
 import { fixBindingsAfterDeletion } from "./element/binding";
-import { newElementWith } from "./element/mutateElement";
+import { mutateElement, newElementWith } from "./element/mutateElement";
 import {
   getBoundTextElementId,
   redrawTextBoundingBox,
@@ -390,6 +390,7 @@ export class AppStateChange implements Change<AppState> {
  * - for performance, add operations in addition to deltas, which increment (decrement) properties by given value (could be used i.e. for presence-like move)
  */
 export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
+  // TODO_UNDO: omit certain props as in ElementUpdates
   private constructor(
     private readonly added: Map<string, Delta<ExcalidrawElement>>,
     private readonly removed: Map<string, Delta<ExcalidrawElement>>,
@@ -513,7 +514,7 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
         ) {
           const from = { ...prevElement };
           const to = { ...nextElement };
-          const delta = Delta.create(
+          const delta = Delta.calculate<ExcalidrawElement>(
             from,
             to,
             ElementsChange.stripIrrelevantProps,
@@ -566,6 +567,7 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
     return ElementsChange.create(removed, added, updated);
   }
 
+  // TODO_UNDO_NEXT: what if we would instead create a new increment or update existing one?
   public applyTo(
     elements: Readonly<Map<string, ExcalidrawElement>>,
   ): [Map<string, ExcalidrawElement>, boolean] {
@@ -623,8 +625,8 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
 
       if (addedElement) {
         elements.set(id, addedElement);
-        this.restoreBoundTextElement(addedElement, elements);
-        this.repairBoundTextContainer(addedElement, elements);
+        this.restoreContainer(addedElement, elements);
+        this.restoreBoundText(addedElement, elements);
       }
     }
 
@@ -726,16 +728,26 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
     return ElementsChange.create(added, removed, updated);
   }
 
-  // Looks like similar things we are doing inside restore.ts (i.e. repairBoundElement)
-  private repairBoundTextContainer(
-    element: ExcalidrawElement,
+  /**
+   * When bounded text is added through a history action, we need to:
+   * - unbind the text if container cannot be found
+   * - restore container if was deleted
+   * - repair container bindings if there are already some bound text elements
+   * - update props of the bound text and container
+   *
+   * Looks like similar to what we are doing inside restore.ts (i.e. repairBoundElement)
+   */
+  private restoreBoundText(
+    boundText: ExcalidrawElement,
     elements: Map<string, ExcalidrawElement>,
   ) {
-    if (isBoundToContainer(element)) {
-      const container = elements.get(element.containerId);
+    if (isBoundToContainer(boundText)) {
+      const container = elements.get(boundText.containerId);
 
       if (container) {
-        const updates = {} as Mutable<Partial<ExcalidrawElement>>;
+        const updates = {} as Mutable<
+          Partial<ExcalidrawTextElementWithContainer>
+        >;
         if (container?.isDeleted) {
           // Restore the container
           updates.isDeleted = false;
@@ -744,7 +756,7 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
         if (hasBoundTextElement(container)) {
           // This `boundElements` field feels abused, instead we should probably have just one `boundTextElement` prop
           const otherBoundTextElements = container.boundElements.filter(
-            ({ type, id }) => type === "text" && id !== element.id,
+            ({ type, id }) => type === "text" && id !== boundText.id,
           );
 
           // Unbound existing bound text elements
@@ -763,43 +775,56 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
             }
           }
 
-          // Bound new text element
-          const newBoundElement = newElementWith(element, {
-            containerId: container.id,
-          });
-
-          elements.set(element.id, newBoundElement);
+          // Bind new text element to the container
+          updates.containerId = container.id;
         }
 
+        let restoredContainer = container;
         if (Object.keys(updates).length) {
-          const restoredContainer = newElementWith(container, updates);
-          elements.set(container.id, restoredContainer);
+          restoredContainer = mutateElement(container, updates, false);
         }
+
+        // TODO_UNDO_NEXT: get rid of such mutations, as if we would fail here, there is no way to roll back
+        redrawTextBoundingBox(
+          boundText as ExcalidrawTextElement,
+          restoredContainer,
+          false,
+        );
       } else {
         // Delete the binding to the container
-        const deletedContainerBinding = newElementWith(element, {
-          containerId: undefined,
-        });
-        elements.set(element.id, deletedContainerBinding);
+        const unboundText = newElementWith(
+          boundText,
+          {
+            containerId: undefined,
+          },
+          true,
+        );
+        elements.set(boundText.id, unboundText);
       }
     }
   }
 
-  private restoreBoundTextElement(
-    element: ExcalidrawElement,
+  /**
+   * When text bindable container is added through history, we need to:
+   * - restore bound text if it was deleted with history action (we don't remove bindings on removal)
+   * - update props of the bound text and container
+   */
+  private restoreContainer(
+    container: ExcalidrawElement,
     elements: Map<string, ExcalidrawElement>,
   ) {
-    if (!hasBoundTextElement(element)) {
+    if (!hasBoundTextElement(container)) {
       return;
     }
 
-    const boundTextElementId = getBoundTextElementId(element) || "";
-    const textElement = elements.get(boundTextElementId);
+    const boundTextElementId = getBoundTextElementId(container) || "";
+    const boundText = elements.get(boundTextElementId);
 
-    if (textElement && textElement.isDeleted) {
-      const restored = newElementWith(textElement, { isDeleted: false });
-      elements.set(textElement.id, restored);
+    if (boundText && boundText.isDeleted) {
+      mutateElement(boundText, { isDeleted: false }, false);
     }
+
+    redrawTextBoundingBox(boundText as ExcalidrawTextElement, container, false);
   }
 
   private removeBoundTextElement(

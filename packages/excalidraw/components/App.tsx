@@ -3596,10 +3596,16 @@ class App extends React.Component<AppProps, AppState> {
         let nextElements = arrayToMap(prevElements);
 
         if (sceneData.elements) {
-          // We need to schedule a snapshot update, as in case `commitToStore` is false  (i.e. remote update),
-          // as it's essential for computing local changes after the async action is completed (i.e. not to include remote changes in the diff).
-          // This is also a breaking change for all local `updateScene` calls without set `commitToStore` to true,
-          // as it makes such updates impossible to undo (previously they were undone coincidentally with the switch snapshot to whole prev snapshot).
+          /**
+           * We need to schedule a snapshot update, as in case `commitToStore` is false  (i.e. remote update),
+           * as it's essential for computing local changes after the async action is completed (i.e. not to include remote changes in the diff).
+           *
+           * This is also a breaking change for all local `updateScene` calls without set `commitToStore` to true,
+           * as it makes such updates impossible to undo (previously they were undone coincidentally with the switch snapshot to whole prev snapshot).
+           *
+           * WARN: be careful here as moving it elsewhere coulb break the history for remote client without noticing
+           * - we need to find a way to test two concurrent client updates simultaneously, while having access to both stores.
+           */
           this.store.scheduleSnapshotUpdate();
 
           // In case of async local actions, we need additionally filter out yet uncomitted local elements.
