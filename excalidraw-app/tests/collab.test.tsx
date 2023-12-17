@@ -10,7 +10,7 @@ import {
   createRedoAction,
   createUndoAction,
 } from "../../packages/excalidraw/actions/actionHistory";
-import { mutateElement } from "../../packages/excalidraw";
+import { newElementWith } from "../../packages/excalidraw";
 const { h } = window;
 
 Object.defineProperty(window, "crypto", {
@@ -71,6 +71,9 @@ vi.mock("socket.io-client", () => {
   };
 });
 
+// These test would deserve to be extended by testing collab with (at least) two clients simultanouesly,
+// while having access to both scenes, appstates, histories and etc.
+// i.e. multiplayer history tests could be a good first candidate, as we could test both history stacks simultaneously.
 describe("collaboration", () => {
   it("creating room should reset deleted elements while allowing undo", async () => {
     await render(<ExcalidrawApp />);
@@ -87,7 +90,7 @@ describe("collaboration", () => {
     });
 
     updateSceneData({
-      elements: [rect1, mutateElement(rect2, { isDeleted: true })],
+      elements: [rect1, newElementWith(rect2, { isDeleted: true })],
       commitToStore: true,
     });
 

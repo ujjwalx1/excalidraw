@@ -67,7 +67,7 @@ export class History {
         historyEntry.applyTo(nextElements, nextAppState);
 
       // TODO_UNDO: Be very careful here, as we could accidentaly iterate through the whole stack
-      // TODO_UNDO: Shouldn't this be inversed to be safer (but slower) i.e. noVisibleChange -> continue?
+      // TODO_UNDO: Better to inverse this condition to be safer (but slower) i.e. noVisibleChange -> continue
       if (containsVisibleChange) {
         break;
       }

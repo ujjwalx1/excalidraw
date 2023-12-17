@@ -2242,7 +2242,7 @@ class App extends React.Component<AppProps, AppState> {
     this.resetHistory();
     this.syncActionResult({
       ...scene,
-      storeAction: StoreAction.UPDATE, // TODO_UNDO: double-check for regression
+      storeAction: StoreAction.UPDATE,
     });
   };
 
@@ -3592,6 +3592,8 @@ class App extends React.Component<AppProps, AppState> {
           };
         }
 
+        // We expect here that the elements were not mutated from the outside and then passed into `updateScene`,
+        // instead a new instance should be passed inside `updateScene` at all times
         const prevElements = this.scene.getElementsIncludingDeleted();
         let nextElements = arrayToMap(prevElements);
 
