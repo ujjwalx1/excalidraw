@@ -79,9 +79,11 @@ describe("collaboration", () => {
     await render(<ExcalidrawApp />);
     // To update the scene with deleted elements before starting collab
     const rect1 = API.createElement({ type: "rectangle", id: "A" });
+    // TODO_UNDO: rewrite to be DRY
     const rect2 = API.createElement({
       type: "rectangle",
       id: "B",
+      width: 100,
     });
 
     updateSceneData({
@@ -98,11 +100,11 @@ describe("collaboration", () => {
       expect(API.getUndoStack().length).toBe(2);
       expect(API.getSnapshot()).toEqual([
         expect.objectContaining({ id: "A" }),
-        expect.objectContaining({ id: "B", isDeleted: true }),
+        expect.objectContaining({ id: "B", isDeleted: true, width: 100 }),
       ]);
       expect(h.elements).toEqual([
         expect.objectContaining({ id: "A" }),
-        expect.objectContaining({ id: "B", isDeleted: true }),
+        expect.objectContaining({ id: "B", isDeleted: true, width: 100 }),
       ]);
     });
     window.collab.startCollaboration(null);
@@ -116,7 +118,7 @@ describe("collaboration", () => {
       expect(h.elements).toEqual([expect.objectContaining({ id: "A" })]);
     });
 
-    const undoAction = createUndoAction(h.history);
+    const undoAction = createUndoAction(h.history, h.store);
     h.app.actionManager.executeAction(undoAction);
 
     // Inability to undo your own deletions (and lose data) is a bigger factor than
@@ -125,11 +127,11 @@ describe("collaboration", () => {
       expect(API.getUndoStack().length).toBe(1);
       expect(API.getSnapshot()).toEqual([
         expect.objectContaining({ id: "A" }),
-        expect.objectContaining({ id: "B", isDeleted: false }),
+        expect.objectContaining({ id: "B", isDeleted: false, width: 100 }),
       ]);
       expect(h.elements).toEqual([
         expect.objectContaining({ id: "A" }),
-        expect.objectContaining({ id: "B", isDeleted: false }),
+        expect.objectContaining({ id: "B", isDeleted: false, width: 100 }),
       ]);
     });
 
@@ -140,15 +142,15 @@ describe("collaboration", () => {
       expect(API.getRedoStack().length).toBe(2);
       expect(API.getSnapshot()).toEqual([
         expect.objectContaining({ id: "A", isDeleted: true }),
-        expect.objectContaining({ id: "B", isDeleted: true }),
+        expect.objectContaining({ id: "B", isDeleted: true, width: 100 }),
       ]);
       expect(h.elements).toEqual([
         expect.objectContaining({ id: "A", isDeleted: true }),
-        expect.objectContaining({ id: "B", isDeleted: true }),
+        expect.objectContaining({ id: "B", isDeleted: true, width: 100 }),
       ]);
     });
 
-    const redoAction = createRedoAction(h.history);
+    const redoAction = createRedoAction(h.history, h.store);
     h.app.actionManager.executeAction(redoAction);
 
     await waitFor(() => {

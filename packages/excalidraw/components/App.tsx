@@ -401,7 +401,7 @@ import { ElementCanvasButton } from "./MagicButton";
 import { MagicIcon, copyIcon, fullscreenIcon } from "./icons";
 import { EditorLocalStorage } from "../data/EditorLocalStorage";
 import FollowMode from "./FollowMode/FollowMode";
-import { Store } from "../store";
+import { IStore, Store } from "../store";
 
 const AppContext = React.createContext<AppClassProperties>(null!);
 const AppPropsContext = React.createContext<AppProps>(null!);
@@ -516,7 +516,7 @@ class App extends React.Component<AppProps, AppState> {
   public library: AppClassProperties["library"];
   public libraryItemsFromStorage: LibraryItems | undefined;
   public id: string;
-  private store: Store;
+  private store: IStore;
   private history: History;
   private excalidrawContainerValue: {
     container: HTMLDivElement | null;
@@ -667,8 +667,12 @@ class App extends React.Component<AppProps, AppState> {
       this,
     );
     this.actionManager.registerAll(actions);
-    this.actionManager.registerAction(createUndoAction(this.history));
-    this.actionManager.registerAction(createRedoAction(this.history));
+    this.actionManager.registerAction(
+      createUndoAction(this.history, this.store),
+    );
+    this.actionManager.registerAction(
+      createRedoAction(this.history, this.store),
+    );
   }
 
   private onWindowMessage(event: MessageEvent) {
@@ -2045,9 +2049,9 @@ class App extends React.Component<AppProps, AppState> {
         this.scene.replaceAllElements(actionResult.elements);
 
         if (actionResult.storeAction === StoreAction.UPDATE) {
-          this.store.scheduleSnapshotUpdate();
+          this.store.shouldUpdateSnapshot();
         } else if (actionResult.storeAction === StoreAction.CAPTURE) {
-          this.store.resumeCapturing();
+          this.store.shouldCalculateIncrement();
         }
       }
 
@@ -2060,9 +2064,9 @@ class App extends React.Component<AppProps, AppState> {
 
       if (actionResult.appState || editingElement || this.state.contextMenu) {
         if (actionResult.storeAction === StoreAction.UPDATE) {
-          this.store.scheduleSnapshotUpdate();
+          this.store.shouldUpdateSnapshot();
         } else if (actionResult.storeAction === StoreAction.CAPTURE) {
-          this.store.resumeCapturing();
+          this.store.shouldCalculateIncrement();
         }
 
         let viewModeEnabled = actionResult?.appState?.viewModeEnabled || false;
@@ -3067,7 +3071,7 @@ class App extends React.Component<AppProps, AppState> {
       this.files = { ...this.files, ...opts.files };
     }
 
-    this.store.resumeCapturing();
+    this.store.shouldCalculateIncrement();
 
     const nextElementsToSelect =
       excludeElementsInFramesFromSelection(newElements);
@@ -3308,7 +3312,7 @@ class App extends React.Component<AppProps, AppState> {
       PLAIN_PASTE_TOAST_SHOWN = true;
     }
 
-    this.store.resumeCapturing();
+    this.store.shouldCalculateIncrement();
   }
 
   setAppState: React.Component<any, AppState>["setState"] = (
@@ -3579,7 +3583,7 @@ class App extends React.Component<AppProps, AppState> {
       commitToStore?: SceneData["commitToStore"];
     }) => {
       if (sceneData.commitToStore) {
-        this.store.resumeCapturing();
+        this.store.shouldCalculateIncrement();
       }
 
       if (sceneData.elements || sceneData.appState) {
@@ -3600,18 +3604,16 @@ class App extends React.Component<AppProps, AppState> {
         if (sceneData.elements) {
           /**
            * We need to schedule a snapshot update, as in case `commitToStore` is false  (i.e. remote update),
-           * as it's essential for computing local changes after the async action is completed (i.e. not to include remote changes in the diff).
+           * it's essential for computing local changes after the async action is completed (i.e. not to include remote changes in the diff).
            *
            * This is also a breaking change for all local `updateScene` calls without set `commitToStore` to true,
-           * as it makes such updates impossible to undo (previously they were undone coincidentally with the switch snapshot to whole prev snapshot).
+           * as it makes such updates impossible to undo (previously they were undone coincidentally with the switch to the whole previously captured snapshot by history).
            *
            * WARN: be careful here as moving it elsewhere coulb break the history for remote client without noticing
-           * - we need to find a way to test two concurrent client updates simultaneously, while having access to both stores.
+           * - we need to find a way to test two concurrent client updates simultaneously, while having access to both stores & histories.
            */
-          this.store.scheduleSnapshotUpdate();
+          this.store.shouldUpdateSnapshot();
 
-          // In case of async local actions, we need additionally filter out yet uncomitted local elements.
-          // Once we will be exchanging just store increments and updating changes this won't be necessary.
           nextElements = this.store.ignoreUncomittedElements(
             arrayToMap(prevElements),
             arrayToMap(sceneData.elements),
@@ -3827,7 +3829,7 @@ class App extends React.Component<AppProps, AppState> {
                 this.state.editingLinearElement.elementId !==
                   selectedElements[0].id
               ) {
-                this.store.resumeCapturing();
+                this.store.shouldCalculateIncrement();
                 this.setState({
                   editingLinearElement: new LinearElementEditor(
                     selectedElement,
@@ -4219,7 +4221,7 @@ class App extends React.Component<AppProps, AppState> {
           ]);
         }
         if (!isDeleted || isExistingElement) {
-          this.store.resumeCapturing();
+          this.store.shouldCalculateIncrement();
         }
 
         this.setState({
@@ -4511,7 +4513,7 @@ class App extends React.Component<AppProps, AppState> {
         (!this.state.editingLinearElement ||
           this.state.editingLinearElement.elementId !== selectedElements[0].id)
       ) {
-        this.store.resumeCapturing();
+        this.store.shouldCalculateIncrement();
         this.setState({
           editingLinearElement: new LinearElementEditor(
             selectedElements[0],
@@ -5328,7 +5330,7 @@ class App extends React.Component<AppProps, AppState> {
       this.state.draggingElement.type === "freedraw"
     ) {
       const element = this.state.draggingElement as ExcalidrawFreeDrawElement;
-      // TODO_UNDO: This update should probably update the snapshot but shouldn't be committed (-> does not need to be undoable -> need for updateSnapshot flag)
+      // TODO_UNDO: This should probably update the snapshot but shouldn't be committed (-> does not need to be undoable -> need for updateSnapshot flag)
       this.updateScene({
         ...(element.points.length < 10
           ? {
@@ -7497,7 +7499,7 @@ class App extends React.Component<AppProps, AppState> {
 
       if (isLinearElement(draggingElement)) {
         if (draggingElement!.points.length > 1) {
-          this.store.resumeCapturing();
+          this.store.shouldCalculateIncrement();
         }
         const pointerCoords = viewportCoordsToSceneCoords(
           childEvent,
@@ -7732,7 +7734,7 @@ class App extends React.Component<AppProps, AppState> {
       }
 
       if (resizingElement) {
-        this.store.resumeCapturing();
+        this.store.shouldCalculateIncrement();
       }
 
       if (resizingElement && isInvisiblySmallElement(resizingElement)) {
@@ -8039,7 +8041,7 @@ class App extends React.Component<AppProps, AppState> {
           this.state.selectedElementIds,
         )
       ) {
-        this.store.resumeCapturing();
+        this.store.shouldCalculateIncrement();
       }
 
       if (pointerDownState.drag.hasOccurred || isResizing || isRotating) {
@@ -8145,7 +8147,7 @@ class App extends React.Component<AppProps, AppState> {
       return ele;
     });
 
-    this.store.resumeCapturing();
+    this.store.shouldCalculateIncrement();
     this.scene.replaceAllElements(elements);
   };
 

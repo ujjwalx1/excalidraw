@@ -183,7 +183,7 @@ export const actionUngroup = register({
   perform: (elements, appState, _, app) => {
     const groupIds = getSelectedGroupIds(appState);
     if (groupIds.length === 0) {
-      return { appState, elements, storeAction: StoreAction.NONE, };
+      return { appState, elements, storeAction: StoreAction.NONE };
     }
 
     let nextElements = [...elements];

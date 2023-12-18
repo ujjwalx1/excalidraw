@@ -1,5 +1,6 @@
 import { AppStateChange, ElementsChange } from "./change";
 import { ExcalidrawElement } from "./element/types";
+import { Snapshot } from "./store";
 import { AppState } from "./types";
 
 // TODO_UNDO: think about limiting the depth of stack
@@ -37,18 +38,27 @@ export class History {
     }
   }
 
-  public undo(elements: Map<string, ExcalidrawElement>, appState: AppState) {
-    return this.perform(this.undoOnce.bind(this), elements, appState);
+  public undo(
+    elements: Map<string, ExcalidrawElement>,
+    appState: AppState,
+    snapshot: Readonly<Snapshot>,
+  ) {
+    return this.perform(this.undoOnce.bind(this), elements, appState, snapshot);
   }
 
-  public redo(elements: Map<string, ExcalidrawElement>, appState: AppState) {
-    return this.perform(this.redoOnce.bind(this), elements, appState);
+  public redo(
+    elements: Map<string, ExcalidrawElement>,
+    appState: AppState,
+    snapshot: Readonly<Snapshot>,
+  ) {
+    return this.perform(this.redoOnce.bind(this), elements, appState, snapshot);
   }
 
   private perform(
     action: typeof this.undoOnce | typeof this.redoOnce,
     elements: Map<string, ExcalidrawElement>,
     appState: AppState,
+    snapshot: Readonly<Snapshot>,
   ): [Map<string, ExcalidrawElement>, AppState] | void {
     let historyEntry = action(elements);
 
@@ -64,7 +74,7 @@ export class History {
     // Iterate through the history entries in case they result in no visible changes
     while (historyEntry) {
       [nextElements, nextAppState, containsVisibleChange] =
-        historyEntry.applyTo(nextElements, nextAppState);
+        historyEntry.applyTo(nextElements, nextAppState, snapshot);
 
       // TODO_UNDO: Be very careful here, as we could accidentaly iterate through the whole stack
       // TODO_UNDO: Better to inverse this condition to be safer (but slower) i.e. noVisibleChange -> continue
@@ -140,9 +150,10 @@ export class HistoryEntry {
   public applyTo(
     elements: Map<string, ExcalidrawElement>,
     appState: AppState,
+    snapshot: Readonly<Snapshot>,
   ): [Map<string, ExcalidrawElement>, AppState, boolean] {
     const [nextElements, elementsContainVisibleChange] =
-      this.elementsChange.applyTo(elements);
+      this.elementsChange.applyTo(elements, snapshot.elements);
 
     const [nextAppState, appStateContainsVisibleChange] =
       this.appStateChange.applyTo(appState, nextElements);

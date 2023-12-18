@@ -8,6 +8,7 @@ import { KEYS } from "../keys";
 import { arrayToMap } from "../utils";
 import { isWindows } from "../constants";
 import { ExcalidrawElement } from "../element/types";
+import { IStore } from "../store";
 
 const writeData = (
   appState: Readonly<AppState>,
@@ -40,13 +41,15 @@ const writeData = (
   return { storeAction: StoreAction.NONE };
 };
 
-type ActionCreator = (history: History) => Action;
+type ActionCreator = (history: History, store: IStore) => Action;
 
-export const createUndoAction: ActionCreator = (history) => ({
+export const createUndoAction: ActionCreator = (history, store) => ({
   name: "undo",
   trackEvent: { category: "history" },
   perform: (elements, appState) =>
-    writeData(appState, () => history.undo(arrayToMap(elements), appState)),
+    writeData(appState, () =>
+      history.undo(arrayToMap(elements), appState, store.getSnapshot()),
+    ),
   keyTest: (event) =>
     event[KEYS.CTRL_OR_CMD] &&
     event.key.toLowerCase() === KEYS.Z &&
@@ -63,11 +66,13 @@ export const createUndoAction: ActionCreator = (history) => ({
   ),
 });
 
-export const createRedoAction: ActionCreator = (history) => ({
+export const createRedoAction: ActionCreator = (history, store) => ({
   name: "redo",
   trackEvent: { category: "history" },
   perform: (elements, appState) =>
-    writeData(appState, () => history.redo(arrayToMap(elements), appState)),
+    writeData(appState, () =>
+      history.redo(arrayToMap(elements), appState, store.getSnapshot()),
+    ),
   keyTest: (event) =>
     (event[KEYS.CTRL_OR_CMD] &&
       event.shiftKey &&

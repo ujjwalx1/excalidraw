@@ -30,8 +30,22 @@ const getObservedAppState = (appState: AppState): ObservedAppState => {
  */
 export interface IStore {
   /**
-   * Capture changes to the @param elements and @param appState by diff calculation and emitting resulting changes as store increment.
-   * In case the property `onlyUpdatingSnapshot` is set, it will only update the store snapshot, without calculating diffs.
+   * Get the store snapshot
+   */
+  getSnapshot(): Readonly<Snapshot>;
+
+  /**
+   * Use to schedule update of the snapshot, useful on updates for which we don't need to calculate increments (i.e. such as remote updates).
+   */
+  shouldUpdateSnapshot(): void;
+
+  /**
+   * Use to schedule calculation of a store increment on a next component update.
+   */
+  shouldCalculateIncrement(): void;
+
+  /**
+   * Capture changes to the @param elements and @param appState by calculating changes (based on a snapshot) and emitting resulting changes as a store increment.
    *
    * @emits StoreIncrementEvent
    */
@@ -54,6 +68,22 @@ export interface IStore {
    * Clears the store instance.
    */
   clear(): void;
+
+  /**
+   * Clears the store instance and destroys the emitter.
+   */
+  destroy(): void;
+
+  /**
+   * Filters out yet uncomitted local elements, which are part of in progress local async actions, based on what we have in snapshot.
+   *
+   * This is necessary on updates in which we receive reconcilled-like elements, already containing elements
+   * which were not yet captured by the store. Once we will be exchanging just store increments this won't be necessary.
+   */
+  ignoreUncomittedElements(
+    prevElements: Map<string, ExcalidrawElement>,
+    nextElements: Map<string, ExcalidrawElement>,
+  ): Map<string, ExcalidrawElement>;
 }
 
 /**
@@ -67,26 +97,31 @@ type StoreIncrementEvent = [
 export class Store implements IStore {
   private readonly onStoreIncrementEmitter = new Emitter<StoreIncrementEvent>();
 
-  private capturingChanges: boolean = false;
+  private calculatingIncrement: boolean = false;
   private updatingSnapshot: boolean = false;
 
   private snapshot = Snapshot.empty();
 
-  public scheduleSnapshotUpdate() {
+  public getSnapshot = () => {
+    return this.snapshot;
+  };
+
+  public shouldUpdateSnapshot = () => {
     this.updatingSnapshot = true;
-  }
+  };
 
   // Suspicious that this is called so many places. Seems error-prone.
-  public resumeCapturing() {
-    this.capturingChanges = true;
-  }
+  public shouldCalculateIncrement = () => {
+    this.calculatingIncrement = true;
+  };
 
-  public capture(
+  // TODO_UNDO: we could alread commit to the store
+  public capture = (
     elements: Map<string, ExcalidrawElement>,
     appState: AppState,
-  ): void {
+  ): void => {
     // Quick exit for irrelevant changes
-    if (!this.capturingChanges && !this.updatingSnapshot) {
+    if (!this.calculatingIncrement && !this.updatingSnapshot) {
       return;
     }
 
@@ -96,7 +131,7 @@ export class Store implements IStore {
       // Optimisation, don't continue if nothing has changed
       if (this.snapshot !== nextSnapshot) {
         // Calculate and record the changes based on the previous and next snapshot
-        if (this.capturingChanges) {
+        if (this.calculatingIncrement) {
           const elementsChange = nextSnapshot.meta.didElementsChange
             ? ElementsChange.calculate(
                 this.snapshot.elements,
@@ -126,14 +161,23 @@ export class Store implements IStore {
     } finally {
       // Reset props
       this.updatingSnapshot = false;
-      this.capturingChanges = false;
+      this.calculatingIncrement = false;
     }
-  }
+  };
 
-  public ignoreUncomittedElements(
+  public listen = (
+    callback: (
+      elementsChange: ElementsChange,
+      appStateChange: AppStateChange,
+    ) => void,
+  ) => {
+    return this.onStoreIncrementEmitter.on(callback);
+  };
+
+  public ignoreUncomittedElements = (
     prevElements: Map<string, ExcalidrawElement>,
     nextElements: Map<string, ExcalidrawElement>,
-  ) {
+  ) => {
     for (const [id, prevElement] of prevElements.entries()) {
       const nextElement = nextElements.get(id);
 
@@ -159,28 +203,19 @@ export class Store implements IStore {
     }
 
     return nextElements;
-  }
+  };
 
-  public listen(
-    callback: (
-      elementsChange: ElementsChange,
-      appStateChange: AppStateChange,
-    ) => void,
-  ) {
-    return this.onStoreIncrementEmitter.on(callback);
-  }
-
-  public clear(): void {
+  public clear = (): void => {
     this.snapshot = Snapshot.empty();
-  }
+  };
 
-  public destroy(): void {
+  public destroy = (): void => {
     this.clear();
     this.onStoreIncrementEmitter.destroy();
-  }
+  };
 }
 
-class Snapshot {
+export class Snapshot {
   private constructor(
     public readonly elements: Map<string, ExcalidrawElement>,
     public readonly appState: ObservedAppState,
@@ -210,7 +245,7 @@ class Snapshot {
   /**
    * Efficiently clone the existing snapshot.
    *
-   * @returns same instance if there are no changes detected, new Snapshot instance otherwise.
+   * @returns same instance if there are no changes detected, new instance otherwise.
    */
   public clone(elements: Map<string, ExcalidrawElement>, appState: AppState) {
     const didElementsChange = this.detectChangedElements(elements);
@@ -241,7 +276,7 @@ class Snapshot {
   /**
    * Detect if there any changed elements.
    *
-   * NOTE: we shouldn't use `sceneVersionNonce` instead, as we need to calls this before the scene updates.
+   * NOTE: we shouldn't use `sceneVersionNonce` instead, as we need to call this before the scene updates.
    */
   private detectChangedElements(nextElements: Map<string, ExcalidrawElement>) {
     if (this.elements === nextElements) {

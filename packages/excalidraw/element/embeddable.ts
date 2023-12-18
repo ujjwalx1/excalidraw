@@ -288,7 +288,6 @@ export const actionSetEmbeddableAsActiveTool = register({
         }),
       },
       storeAction: StoreAction.NONE,
-
     };
   },
 });

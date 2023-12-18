@@ -9,7 +9,7 @@ import { ShapeCache } from "../scene/ShapeCache";
 
 export type ElementUpdate<TElement extends ExcalidrawElement> = Omit<
   Partial<TElement>,
-  "id" | "version" | "versionNonce"
+  "id" | "version" | "versionNonce" | "updated"
 >;
 
 // This function tracks updates of text elements for the purposes for collaboration.
@@ -33,6 +33,7 @@ export const mutateElement = <TElement extends Mutable<ExcalidrawElement>>(
 
   for (const key in updates) {
     const value = (updates as any)[key];
+    // We might want to come up for a different default value for containerId, since unbound is equal to "undefined"
     if (typeof value !== "undefined") {
       if (
         (element as any)[key] === value &&
@@ -79,6 +80,7 @@ export const mutateElement = <TElement extends Mutable<ExcalidrawElement>>(
       didChange = true;
     }
   }
+
   if (!didChange) {
     return element;
   }
@@ -106,27 +108,24 @@ export const mutateElement = <TElement extends Mutable<ExcalidrawElement>>(
 export const newElementWith = <TElement extends ExcalidrawElement>(
   element: TElement,
   updates: ElementUpdate<TElement>,
-  forceUpdate: boolean = false,
 ): TElement => {
-  if (!forceUpdate) {
-    let didChange = false;
-    for (const key in updates) {
-      const value = (updates as any)[key];
-      if (typeof value !== "undefined") {
-        if (
-          (element as any)[key] === value &&
-          // if object, always update because its attrs could have changed
-          (typeof value !== "object" || value === null)
-        ) {
-          continue;
-        }
-        didChange = true;
+  let didChange = false;
+  for (const key in updates) {
+    const value = (updates as any)[key];
+    if (typeof value !== "undefined") {
+      if (
+        (element as any)[key] === value &&
+        // if object, always update because its attrs could have changed
+        (typeof value !== "object" || value === null)
+      ) {
+        continue;
       }
+      didChange = true;
     }
+  }
 
-    if (!didChange) {
-      return element;
-    }
+  if (!didChange) {
+    return element;
   }
 
   return {

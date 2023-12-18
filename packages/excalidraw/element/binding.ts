@@ -679,7 +679,6 @@ const newBindingAfterDuplication = (
 export const fixBindingsAfterDeletion = (
   sceneElements: readonly ExcalidrawElement[],
   deletedElements: readonly ExcalidrawElement[],
-  informMutation: boolean = true,
 ): void => {
   const deletedElementIds = new Set(
     deletedElements.map((element) => element.id),
@@ -706,31 +705,23 @@ export const fixBindingsAfterDeletion = (
     .filter(({ id }) => affectedElements.has(id))
     .forEach((element) => {
       if (isBindableElement(element)) {
-        mutateElement(
-          element,
-          {
-            boundElements: newBoundElementsAfterDeletion(
-              element.boundElements,
-              deletedElementIds,
-            ),
-          },
-          informMutation,
-        );
+        mutateElement(element, {
+          boundElements: newBoundElementsAfterDeletion(
+            element.boundElements,
+            deletedElementIds,
+          ),
+        });
       } else if (isBindingElement(element)) {
-        mutateElement(
-          element,
-          {
-            startBinding: newBindingAfterDeletion(
-              element.startBinding,
-              deletedElementIds,
-            ),
-            endBinding: newBindingAfterDeletion(
-              element.endBinding,
-              deletedElementIds,
-            ),
-          },
-          informMutation,
-        );
+        mutateElement(element, {
+          startBinding: newBindingAfterDeletion(
+            element.startBinding,
+            deletedElementIds,
+          ),
+          endBinding: newBindingAfterDeletion(
+            element.endBinding,
+            deletedElementIds,
+          ),
+        });
       }
     });
 };

@@ -1,3 +1,4 @@
+import * as Renderer from "../renderer/renderScene";
 import { assertSelectedElements, render, togglePopover } from "./test-utils";
 import { Excalidraw } from "../index";
 import { Keyboard, Pointer, UI } from "./helpers/ui";
@@ -15,12 +16,39 @@ import {
   ExcalidrawGenericElement,
   ExcalidrawTextElement,
 } from "../element/types";
+import { vi } from "vitest";
 
 const { h } = window;
 
 const mouse = new Pointer("mouse");
 
+const checkpoint = (name: string) => {
+  expect(renderStaticScene.mock.calls.length).toMatchSnapshot(
+    `[${name}] number of renders`,
+  );
+
+  const { name: _, ...strippedAppState } = h.state;
+  expect(strippedAppState).toMatchSnapshot(`[${name}] appState`);
+  expect(h.history).toMatchSnapshot(`[${name}] history`);
+  expect(h.elements.length).toMatchSnapshot(`[${name}] number of elements`);
+  h.elements
+    .map(({ seed, versionNonce, ...strippedElement }) => strippedElement)
+    .forEach((element, i) =>
+      expect(element).toMatchSnapshot(`[${name}] element ${i}`),
+    );
+};
+
+const renderStaticScene = vi.spyOn(Renderer, "renderStaticScene");
+
 describe("history", () => {
+  beforeEach(() => {
+    renderStaticScene.mockClear();
+  });
+
+  afterEach(() => {
+    checkpoint("end of test");
+  });
+
   it("initializing scene should end up with no history entry", async () => {
     await render(
       <Excalidraw
@@ -39,8 +67,8 @@ describe("history", () => {
       expect(h.history.isUndoStackEmpty).toBeTruthy();
     });
 
-    const undoAction = createUndoAction(h.history);
-    const redoAction = createRedoAction(h.history);
+    const undoAction = createUndoAction(h.history, h.store);
+    const redoAction = createRedoAction(h.history, h.store);
     // noop
     h.app.actionManager.executeAction(undoAction);
     expect(h.elements).toEqual([
@@ -113,8 +141,8 @@ describe("history", () => {
       expect.objectContaining({ id: "B", isDeleted: false }),
     ]);
 
-    const undoAction = createUndoAction(h.history);
-    const redoAction = createRedoAction(h.history);
+    const undoAction = createUndoAction(h.history, h.store);
+    const redoAction = createRedoAction(h.history, h.store);
     h.app.actionManager.executeAction(undoAction);
     expect(h.elements).toEqual([
       expect.objectContaining({ id: "A", isDeleted: false }),
@@ -378,6 +406,10 @@ describe("history", () => {
 
       expect(API.getUndoStack().length).toBe(2);
 
+      expect(h.elements).toEqual([
+        expect.objectContaining({ backgroundColor: red }),
+      ]);
+
       // Simulate remote update
       excalidrawAPI.updateScene({
         elements: [
@@ -444,6 +476,7 @@ describe("history", () => {
     });
 
     // https://www.figma.com/blog/how-figmas-multiplayer-technology-works/#implementing-undo
+    // This is due to the fact that updated deltas are updated in `applyLatestChanges`.
     it("should update history entries after remote changes on the same properties", async () => {
       UI.createElement("rectangle", { x: 10 });
       togglePopover("Background");
@@ -501,6 +534,146 @@ describe("history", () => {
       Keyboard.undo();
       expect(h.elements).toEqual([
         expect.objectContaining({ backgroundColor: transparent }),
+      ]);
+    });
+
+    // This is due to the fact that added deltas don't get updated in `applyLatestChanges`.
+    it("should allow the element author to restore his remotely deleted element", async () => {
+      UI.createElement("rectangle", { x: 10 });
+      togglePopover("Background");
+      UI.clickOnTestId("color-red");
+
+      expect(API.getUndoStack().length).toBe(2);
+
+      expect(h.elements).toEqual([
+        expect.objectContaining({ backgroundColor: red }),
+      ]);
+
+      // Simulate remote update & deletion
+      excalidrawAPI.updateScene({
+        elements: [
+          newElementWith(h.elements[0], {
+            backgroundColor: yellow,
+            isDeleted: true,
+          }),
+        ],
+      });
+
+      expect(h.elements).toEqual([
+        expect.objectContaining({
+          backgroundColor: yellow,
+          isDeleted: true,
+        }),
+      ]);
+
+      // Will iterate through undo stack since applying the change
+      // results in no visible change on a deleted element
+      Keyboard.undo();
+      expect(API.getUndoStack().length).toBe(0);
+      expect(API.getRedoStack().length).toBe(2);
+      expect(h.elements).toEqual([
+        expect.objectContaining({
+          backgroundColor: transparent,
+          isDeleted: true,
+        }),
+      ]);
+
+      Keyboard.redo();
+      expect(API.getUndoStack().length).toBe(1);
+      expect(API.getRedoStack().length).toBe(1);
+      expect(h.elements).toEqual([
+        expect.objectContaining({
+          backgroundColor: transparent,
+          isDeleted: false, // ...and we have the element back!
+        }),
+      ]);
+
+      Keyboard.redo();
+      expect(API.getUndoStack().length).toBe(2);
+      expect(API.getRedoStack().length).toBe(0);
+      expect(h.elements).toEqual([
+        expect.objectContaining({
+          backgroundColor: yellow, // ..now even with the latest color
+          isDeleted: false,
+        }),
+      ]);
+    });
+
+    // This is due to the fact that removed deltas don't get updated in `applyLatestChanges`.
+    it("should allow the element author to restore the element he deleted back to the state at the time of removal", async () => {
+      UI.createElement("rectangle", { x: 10 });
+      Keyboard.keyDown(KEYS.DELETE);
+
+      expect(API.getUndoStack().length).toBe(2);
+      expect(h.elements).toEqual([
+        expect.objectContaining({
+          backgroundColor: transparent,
+          isDeleted: true,
+        }),
+      ]);
+
+      // Simulate remote update & restore
+      excalidrawAPI.updateScene({
+        elements: [
+          newElementWith(h.elements[0], {
+            backgroundColor: yellow,
+            isDeleted: false, // undeletion might happen due to concurrency between clients
+          }),
+        ],
+      });
+
+      expect(API.getSelectedElements().length).toBe(0);
+      expect(h.elements).toEqual([
+        expect.objectContaining({
+          backgroundColor: yellow,
+          isDeleted: false,
+        }),
+      ]);
+
+      Keyboard.undo();
+      expect(assertSelectedElements(h.elements[0])); // undo stops here because of selection
+      expect(API.getUndoStack().length).toBe(1);
+      expect(API.getRedoStack().length).toBe(1);
+      expect(h.elements).toEqual([
+        expect.objectContaining({
+          backgroundColor: yellow,
+          isDeleted: false,
+        }),
+      ]);
+
+      Keyboard.undo();
+      expect(API.getSelectedElements().length).toBe(0);
+      expect(API.getUndoStack().length).toBe(0);
+      expect(API.getRedoStack().length).toBe(2);
+      expect(h.elements).toEqual([
+        expect.objectContaining({
+          backgroundColor: yellow,
+          isDeleted: true,
+        }),
+      ]);
+
+      Keyboard.redo();
+      expect(assertSelectedElements(h.elements[0]));
+      expect(API.getUndoStack().length).toBe(1);
+      expect(API.getRedoStack().length).toBe(1);
+      expect(h.elements).toEqual([
+        expect.objectContaining({
+          backgroundColor: transparent,
+          isDeleted: false,
+        }),
+      ]);
+
+      // We do not expect our `backgroundColor` to be updated into `yellow`,
+      // to allow to get to the same point the element was at the time of the removal.
+      Keyboard.redo();
+      expect(API.getSelectedElements().length).toBe(0);
+      expect(API.getUndoStack().length).toBe(2);
+      expect(API.getRedoStack().length).toBe(0);
+      expect(h.elements).toEqual([
+        expect.objectContaining({
+          backgroundColor: transparent,
+          isDeleted: true,
+        }),
       ]);
     });
 
@@ -1022,129 +1195,19 @@ describe("history", () => {
         text = API.createElement({ ...textProps, containerId: container.id });
       });
 
-      it("should update bound text element when it's added through the history and it's container was updated on remote", async () => {
-        // Simulate local update
-        excalidrawAPI.updateScene({
-          elements: [
-            newElementWith(container, {
-              boundElements: [{ id: text.id, type: "text" }],
-            }),
-            text,
-          ],
-          commitToStore: true,
-        });
-
-        Keyboard.undo();
-        expect(API.getUndoStack().length).toBe(0);
-        expect(API.getRedoStack().length).toBe(1);
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            id: container.id,
-            boundElements: null,
-            isDeleted: false,
-          }),
-          expect.objectContaining({
-            id: text.id,
-            isDeleted: true,
-          }),
-        ]);
-
-        // Simulate remote update
-        excalidrawAPI.updateScene({
-          elements: [
-            newElementWith(container, {
-              x: 50,
-              y: 50,
-              angle: 45,
-              height: 10,
-            }),
-            h.elements[1],
-          ],
-        });
-
-        expect(API.getUndoStack().length).toBe(0);
-        expect(API.getRedoStack().length).toBe(1);
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            id: container.id,
-            x: 50,
-            y: 50,
-            angle: 45,
-            height: 10,
-            isDeleted: false,
-          }),
-          expect.objectContaining({
-            ...textProps,
-            id: text.id,
-            isDeleted: true,
-          }),
-        ]);
-
-        Keyboard.redo();
-        expect(API.getUndoStack().length).toBe(1);
-        expect(API.getRedoStack().length).toBe(0);
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            id: container.id,
-            boundElements: [{ id: text.id, type: text.type }],
-            x: 50,
-            y: 50,
-            angle: 45,
-            height: 35,
-            isDeleted: false,
-          }),
-          expect.objectContaining({
-            id: text.id,
-            angle: 45,
-            x: 55,
-            y: 55,
-            isDeleted: false,
-          }),
-        ]);
-      });
-
-      it("should update remotely added bound text element when it's container was updated through the history", async () => {
-        // Simulate remote update
-        excalidrawAPI.updateScene({
-          elements: [
-            newElementWith(container, {
-              boundElements: [{ id: text.id, type: "text" }],
-            }),
-            newElementWith(text, {
-              isDeleted: true, // purposefully adding as deleted as it would be immediately undone
-            }),
-          ],
-        });
-
-        // Simulate local update, purposefully don't update text
+      it("should remove remotely added bound text when it's container is removed through the history", async () => {
+        // Simulate local update and deletion
         excalidrawAPI.updateScene({
           elements: [
             newElementWith(h.elements[0], {
-              x: 30,
-              y: 30,
-              angle: 90,
+              x: 200,
+              y: 200,
+              angle: 180,
+              isDeleted: true,
             }),
-            h.elements[1],
           ],
           commitToStore: true,
         });
-
-        expect(API.getUndoStack().length).toBe(1);
-        expect(API.getRedoStack().length).toBe(0);
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            id: container.id,
-            x: 30,
-            y: 30,
-            angle: 90,
-            isDeleted: false,
-          }),
-          expect.objectContaining({
-            ...textProps,
-            id: text.id,
-            isDeleted: true,
-          }),
-        ]);
 
         Keyboard.undo();
         expect(API.getUndoStack().length).toBe(0);
@@ -1157,91 +1220,17 @@ describe("history", () => {
             angle: 0,
             isDeleted: false,
           }),
-          expect.objectContaining({
-            ...textProps,
-            id: text.id,
-            isDeleted: true,
-          }),
         ]);
 
-        Keyboard.redo();
-        expect(API.getUndoStack().length).toBe(1);
-        expect(API.getRedoStack().length).toBe(0);
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            id: container.id,
-            x: 30,
-            y: 30,
-            angle: 90,
-            isDeleted: false,
-          }),
-          expect.objectContaining({
-            id: text.id,
-            angle: 90,
-            x: 35,
-            y: 35,
-            isDeleted: true, // Notice it gets updated regardless of deletion
-          }),
-        ]);
-      });
-
-      it("should restore remotely deleted container when its bound text element is updated through the history", async () => {
-        // Simulate local update
+        // Simulate remote update
         excalidrawAPI.updateScene({
           elements: [
-            newElementWith(container, {
+            newElementWith(h.elements[0], {
               boundElements: [{ id: text.id, type: "text" }],
             }),
             text,
           ],
-          commitToStore: true,
         });
-
-        Keyboard.undo();
-        expect(API.getUndoStack().length).toBe(0);
-        expect(API.getRedoStack().length).toBe(1);
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            id: container.id,
-            boundElements: null,
-            isDeleted: false,
-          }),
-          expect.objectContaining({
-            ...textProps,
-            id: text.id,
-            isDeleted: true,
-          }),
-        ]);
-
-        // Simulate remote update and deletion
-        excalidrawAPI.updateScene({
-          elements: [
-            newElementWith(container, {
-              x: 200,
-              y: 200,
-              angle: 90,
-              isDeleted: true,
-            }),
-            h.elements[1],
-          ],
-        });
-
-        expect(API.getUndoStack().length).toBe(0);
-        expect(API.getRedoStack().length).toBe(1);
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            id: container.id,
-            x: 200,
-            y: 200,
-            angle: 90,
-            isDeleted: true,
-          }),
-          expect.objectContaining({
-            ...textProps,
-            id: text.id,
-            isDeleted: true,
-          }),
-        ]);
 
         Keyboard.redo();
         expect(API.getUndoStack().length).toBe(1);
@@ -1249,41 +1238,24 @@ describe("history", () => {
         expect(h.elements).toEqual([
           expect.objectContaining({
             id: container.id,
+            boundElements: [{ id: text.id, type: "text" }],
             x: 200,
             y: 200,
-            angle: 90,
-            isDeleted: false,
+            angle: 180,
+            isDeleted: true,
           }),
           expect.objectContaining({
-            ...textProps,
             x: 205,
             y: 205,
-            angle: 90,
-            id: text.id,
-            isDeleted: false,
-          }),
-        ]);
-
-        Keyboard.undo();
-        expect(API.getUndoStack().length).toBe(0);
-        expect(API.getRedoStack().length).toBe(1);
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            id: container.id,
-            isDeleted: false,
-          }),
-          expect.objectContaining({
-            ...textProps,
-            x: 205,
-            y: 205,
-            angle: 90,
+            angle: 180,
+            containerId: container.id,
             id: text.id,
             isDeleted: true,
           }),
         ]);
       });
 
-      it("should restore remotely added bound text when its container is restored through the history", async () => {
+      it("should restore remotely added bound text when it's container is added through the history", async () => {
         // Simulate remote update
         excalidrawAPI.updateScene({
           elements: [
@@ -1310,6 +1282,7 @@ describe("history", () => {
           }),
           expect.objectContaining({
             ...textProps,
+            containerId: container.id,
             id: text.id,
           }),
         ]);
@@ -1340,6 +1313,7 @@ describe("history", () => {
           }),
           expect.objectContaining({
             id: text.id,
+            containerId: container.id,
             x: 205,
             y: 205,
             angle: 180,
@@ -1347,64 +1321,7 @@ describe("history", () => {
         ]);
       });
 
-      it("should remove remotely added bound text when its container is removed through the history", async () => {
-        // Simulate local update and deletion
-        excalidrawAPI.updateScene({
-          elements: [
-            newElementWith(container, {
-              x: 200,
-              y: 200,
-              angle: 180,
-              isDeleted: true,
-            }),
-          ],
-          commitToStore: true,
-        });
-
-        Keyboard.undo();
-        expect(API.getUndoStack().length).toBe(0);
-        expect(API.getRedoStack().length).toBe(1);
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            id: container.id,
-            x: 10,
-            y: 10,
-            angle: 0,
-            isDeleted: false,
-          }),
-        ]);
-
-        // Simulate remote update
-        excalidrawAPI.updateScene({
-          elements: [
-            newElementWith(h.elements[0], {
-              boundElements: [{ id: text.id, type: "text" }],
-            }),
-            text,
-          ],
-        });
-
-        Keyboard.redo();
-        expect(API.getUndoStack().length).toBe(1);
-        expect(API.getRedoStack().length).toBe(0);
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            id: container.id,
-            boundElements: [{ id: text.id, type: "text" }],
-            x: 200,
-            y: 200,
-            angle: 180,
-            isDeleted: true,
-          }),
-          expect.objectContaining({
-            ...textProps,
-            id: text.id,
-            isDeleted: true,
-          }),
-        ]);
-      });
-
-      it("should unbind bound text element from a container, when it is restored through the history after its container was force deleted remotely", async () => {
+      it("should restore remotely deleted container when it's bound text element is updated through the history", async () => {
         // Simulate local update
         excalidrawAPI.updateScene({
           elements: [
@@ -1416,18 +1333,74 @@ describe("history", () => {
           commitToStore: true,
         });
 
+        Keyboard.undo();
+        expect(API.getUndoStack().length).toBe(0);
+        expect(API.getRedoStack().length).toBe(1);
+        expect(h.elements).toEqual([
+          expect.objectContaining({
+            id: container.id,
+            boundElements: null,
+            isDeleted: false,
+          }),
+          expect.objectContaining({
+            ...textProps,
+            containerId: null,
+            id: text.id,
+            isDeleted: true,
+          }),
+        ]);
+
+        // Simulate remote update and deletion
+        excalidrawAPI.updateScene({
+          elements: [
+            newElementWith(h.elements[0], {
+              x: 200,
+              y: 200,
+              angle: 90,
+              isDeleted: true,
+            }),
+            h.elements[1],
+          ],
+        });
+
+        expect(API.getUndoStack().length).toBe(0);
+        expect(API.getRedoStack().length).toBe(1);
+        expect(h.elements).toEqual([
+          expect.objectContaining({
+            id: container.id,
+            boundElements: null,
+            x: 200,
+            y: 200,
+            angle: 90,
+            isDeleted: true,
+          }),
+          expect.objectContaining({
+            ...textProps,
+            containerId: null,
+            id: text.id,
+            isDeleted: true,
+          }),
+        ]);
+
+        Keyboard.redo();
         expect(API.getUndoStack().length).toBe(1);
         expect(API.getRedoStack().length).toBe(0);
         expect(h.elements).toEqual([
           expect.objectContaining({
             id: container.id,
             boundElements: [{ id: text.id, type: "text" }],
+            x: 200,
+            y: 200,
+            angle: 90,
             isDeleted: false,
           }),
           expect.objectContaining({
             ...textProps,
-            id: text.id,
             containerId: container.id,
+            x: 205,
+            y: 205,
+            angle: 90,
+            id: text.id,
             isDeleted: false,
           }),
         ]);
@@ -1443,38 +1416,17 @@ describe("history", () => {
           }),
           expect.objectContaining({
             ...textProps,
+            containerId: null,
+            x: 205,
+            y: 205,
+            angle: 90,
             id: text.id,
-            containerId: container.id,
             isDeleted: true,
-          }),
-        ]);
-
-        // Simulate remote force deletion
-        excalidrawAPI.updateScene({
-          elements: [h.elements[1]],
-        });
-
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            ...textProps,
-            id: text.id,
-            containerId: container.id,
-          }),
-        ]);
-
-        Keyboard.redo();
-        expect(API.getUndoStack().length).toBe(1);
-        expect(API.getRedoStack().length).toBe(0);
-        expect(h.elements).toEqual([
-          expect.objectContaining({
-            ...textProps,
-            id: text.id,
-            containerId: undefined,
           }),
         ]);
       });
 
-      it("should unbind existing text elements when bound text element is restored through the history", async () => {
+      it("should unbind existing text elements when bound text element is added through the history", async () => {
         const localText = API.createElement({
           type: "text",
           text: "ola",
@@ -1503,7 +1455,7 @@ describe("history", () => {
           }),
           expect.objectContaining({
             id: localText.id,
-            containerId: container.id, // we don't delete binding on removal, so that we could restore it back
+            containerId: null,
             isDeleted: true,
           }),
         ]);
@@ -1511,12 +1463,12 @@ describe("history", () => {
         // Simulate remotely replacing the text
         excalidrawAPI.updateScene({
           elements: [
-            newElementWith(container, {
+            newElementWith(h.elements[0], {
               boundElements: [{ id: text.id, type: "text" }],
             }),
-            newElementWith(localText, {
+            newElementWith(h.elements[1] as ExcalidrawTextElement, {
+              containerId: null,
               isDeleted: true,
-              containerId: undefined,
             }),
             text,
           ],
@@ -1532,7 +1484,7 @@ describe("history", () => {
           }),
           expect.objectContaining({
             id: localText.id,
-            containerId: undefined,
+            containerId: null,
             isDeleted: true,
           }),
           expect.objectContaining({
@@ -1561,22 +1513,215 @@ describe("history", () => {
           expect.objectContaining({
             id: text.id,
             text: "que pasa",
-            containerId: undefined,
+            containerId: null,
             isDeleted: true,
+          }),
+        ]);
+      });
+
+      it("should update remotely added bound text when it's container was updated through the history", async () => {
+        // Simulate remote update
+        excalidrawAPI.updateScene({
+          elements: [
+            newElementWith(container, {
+              boundElements: [{ id: text.id, type: "text" }],
+            }),
+            newElementWith(text, {
+              isDeleted: true, // purposefully adding as deleted as it would be immediately undone
+            }),
+          ],
+        });
+
+        // Simulate local update, purposefully don't update text
+        excalidrawAPI.updateScene({
+          elements: [
+            newElementWith(h.elements[0], {
+              x: 30,
+              y: 30,
+              angle: 90,
+            }),
+            h.elements[1],
+          ],
+          commitToStore: true,
+        });
+
+        expect(API.getUndoStack().length).toBe(1);
+        expect(API.getRedoStack().length).toBe(0);
+        expect(h.elements).toEqual([
+          expect.objectContaining({
+            id: container.id,
+            boundElements: [{ id: text.id, type: "text" }],
+            x: 30,
+            y: 30,
+            angle: 90,
+            isDeleted: false,
+          }),
+          expect.objectContaining({
+            ...textProps,
+            containerId: container.id,
+            id: text.id,
+            isDeleted: true,
+          }),
+        ]);
+
+        Keyboard.undo();
+        expect(API.getUndoStack().length).toBe(0);
+        expect(API.getRedoStack().length).toBe(1);
+        expect(h.elements).toEqual([
+          expect.objectContaining({
+            id: container.id,
+            boundElements: null,
+            x: 10,
+            y: 10,
+            angle: 0,
+            isDeleted: false,
+          }),
+          expect.objectContaining({
+            ...textProps,
+            containerId: null,
+            id: text.id,
+            isDeleted: true,
+          }),
+        ]);
+
+        // Simulate remote redo
+        excalidrawAPI.updateScene({
+          elements: [
+            newElementWith(container, {
+              boundElements: [{ id: text.id, type: "text" }],
+            }),
+            newElementWith(text, {
+              isDeleted: false,
+            }),
+          ],
+        });
+
+        expect(h.elements).toEqual([
+          expect.objectContaining({
+            id: container.id,
+            boundElements: [{ id: text.id, type: "text" }],
+            x: 10,
+            y: 10,
+            angle: 0,
+            isDeleted: false,
+          }),
+          expect.objectContaining({
+            ...textProps,
+            containerId: container.id,
+            id: text.id,
+            isDeleted: false,
+          }),
+        ]);
+
+        Keyboard.redo();
+        expect(API.getUndoStack().length).toBe(1);
+        expect(API.getRedoStack().length).toBe(0);
+        expect(h.elements).toEqual([
+          expect.objectContaining({
+            id: container.id,
+            boundElements: [{ id: text.id, type: "text" }],
+            x: 30,
+            y: 30,
+            angle: 90,
+            isDeleted: false,
+          }),
+          expect.objectContaining({
+            containerId: container.id,
+            id: text.id,
+            isDeleted: false,
+            x: 35,
+            y: 35,
+            angle: 90,
+          }),
+        ]);
+      });
+
+      it("should update bound text element when it's container was updated on remote after it's added through the history", async () => {
+        // Simulate local update
+        excalidrawAPI.updateScene({
+          elements: [
+            newElementWith(h.elements[0], {
+              boundElements: [{ id: text.id, type: "text" }],
+            }),
+            text,
+          ],
+          commitToStore: true,
+        });
+
+        Keyboard.undo();
+        expect(API.getUndoStack().length).toBe(0);
+        expect(API.getRedoStack().length).toBe(1);
+        expect(h.elements).toEqual([
+          expect.objectContaining({
+            id: container.id,
+            boundElements: null,
+            isDeleted: false,
+          }),
+          expect.objectContaining({
+            ...textProps,
+            containerId: null,
+            id: text.id,
+            isDeleted: true,
+          }),
+        ]);
+
+        // Simulate remote update
+        excalidrawAPI.updateScene({
+          elements: [
+            newElementWith(h.elements[0], {
+              x: 50,
+              y: 50,
+              angle: 45,
+              height: 10,
+            }),
+            h.elements[1],
+          ],
+        });
+
+        expect(API.getUndoStack().length).toBe(0);
+        expect(API.getRedoStack().length).toBe(1);
+        expect(h.elements).toEqual([
+          expect.objectContaining({
+            id: container.id,
+            boundElements: null,
+            x: 50,
+            y: 50,
+            angle: 45,
+            height: 10,
+            isDeleted: false,
+          }),
+          expect.objectContaining({
+            ...textProps,
+            containerId: null,
+            id: text.id,
+            isDeleted: true,
+          }),
+        ]);
+
+        Keyboard.redo();
+        expect(API.getUndoStack().length).toBe(1);
+        expect(API.getRedoStack().length).toBe(0);
+        expect(h.elements).toEqual([
+          expect.objectContaining({
+            id: container.id,
+            boundElements: [{ id: text.id, type: "text" }],
+            x: 50,
+            y: 50,
+            angle: 45,
+            height: 35,
+            isDeleted: false,
+          }),
+          expect.objectContaining({
+            ...textProps,
+            containerId: container.id,
+            id: text.id,
+            angle: 45,
+            x: 55,
+            y: 55,
+            isDeleted: false,
           }),
         ]);
       });
     });
   });
 });
-
-// TODO_UNDO: testing edge cases - empty undos - when items are already selected / are deleted / etc.
-// TODO_UNDO: testing linear element + editor (multiple, single clients / empty undo / redos / selection)
-// TODO_UNDO: testing z-index actions (after Ryans PR)
-// TODO_UNDO: testing edge cases - test out number of store calls in collab (again could add some meta error for being called too often)
-// TODO_UNDO: testing edge cases - add what elements should not contain (notEqual)
-// TODO_UNDO: testing edge cases - state of the stored increments / changes and their deltas
-// TODO_UNDO: testing edge cases - caching / cloning of snapshot and its disposal
-// TODO_UNDO: testing edge cases - unit testing quick quick reference checks and exits
-// TODO_UNDO: testing edge cases - added items as deleted through the API
-// TODO_UNDO: testing the "async" image action (manipulation, transformation, etc.) - now it's not recorded after creation, only after clicking outside

@@ -1,6 +1,9 @@
 import { ENV } from "./constants";
-import { fixBindingsAfterDeletion } from "./element/binding";
-import { ElementUpdate, newElementWith } from "./element/mutateElement";
+import {
+  ElementUpdate,
+  mutateElement,
+  newElementWith,
+} from "./element/mutateElement";
 import {
   getBoundTextElementId,
   redrawTextBoundingBox,
@@ -26,7 +29,6 @@ import { arrayToObject, assertNever, isShallowEqual } from "./utils";
  * Keeping it as pure object (without transient state, side-effects, etc.), so we don't have to instantiate it on load.
  */
 class Delta<T> {
-  // TODO_UNDO: is it really from / to, now it's more like removed / added (but not exactly)
   private constructor(
     public readonly from: Partial<T>,
     public readonly to: Partial<T>,
@@ -266,7 +268,7 @@ export class AppStateChange implements Change<AppState> {
   // TODO_UNDO: we might need to filter out appState related to deleted elements
   public applyTo(
     appState: Readonly<AppState>,
-    elements: Readonly<Map<string, ExcalidrawElement>>,
+    elements: ReadonlyMap<string, ExcalidrawElement>,
   ): [AppState, boolean] {
     const {
       selectedElementIds: removedSelectedElementIds = {},
@@ -367,7 +369,7 @@ export class AppStateChange implements Change<AppState> {
   private checkForVisibleChanges(
     prevAppState: AppState,
     nextAppState: ObservedAppState,
-    nextElements: Map<string, ExcalidrawElement>,
+    nextElements: ReadonlyMap<string, ExcalidrawElement>,
   ): boolean {
     const containsStandaloneDifference = Delta.isRightDifferent(
       prevAppState,
@@ -438,7 +440,7 @@ export class AppStateChange implements Change<AppState> {
 
   private static checkForSelectedElementsDifferences(
     appState: Pick<ObservedElementsAppState, "selectedElementIds">,
-    elements: Map<string, ExcalidrawElement>,
+    elements: ReadonlyMap<string, ExcalidrawElement>,
   ) {
     // TODO_UNDO: it could have been visible before (and now it's not)
     for (const id of Object.keys(appState.selectedElementIds)) {
@@ -462,7 +464,7 @@ export class AppStateChange implements Change<AppState> {
       | ObservedElementsAppState["editingLinearElement"]
       | ObservedAppState["selectedLinearElement"]
       | undefined,
-    elements: Map<string, ExcalidrawElement>,
+    elements: ReadonlyMap<string, ExcalidrawElement>,
   ) {
     if (!linearElement) {
       return;
@@ -519,6 +521,8 @@ export class AppStateChange implements Change<AppState> {
   }
 }
 
+type ElementPartial = Omit<ElementUpdate<ExcalidrawElement>, "seed">;
+
 /**
  * Elements change is a low level primitive to capture a change between two sets of elements.
  * It does so by encapsulating forward and backward `Delta`s, which allow to travel in both directions.
@@ -530,17 +534,16 @@ export class AppStateChange implements Change<AppState> {
  * - for performance, add operations in addition to deltas, which increment (decrement) properties by given value (could be used i.e. for presence-like move)
  */
 export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
-  // TODO_UNDO: omit certain props as in ElementUpdates (everywhere)
   private constructor(
-    private readonly added: Map<string, Delta<ExcalidrawElement>>,
-    private readonly removed: Map<string, Delta<ExcalidrawElement>>,
-    private readonly updated: Map<string, Delta<ExcalidrawElement>>,
+    private readonly added: Map<string, Delta<ElementPartial>>,
+    private readonly removed: Map<string, Delta<ElementPartial>>,
+    private readonly updated: Map<string, Delta<ElementPartial>>,
   ) {}
 
   public static create(
-    added: Map<string, Delta<ExcalidrawElement>>,
-    removed: Map<string, Delta<ExcalidrawElement>>,
-    updated: Map<string, Delta<ExcalidrawElement>>,
+    added: Map<string, Delta<ElementPartial>>,
+    removed: Map<string, Delta<ElementPartial>>,
+    updated: Map<string, Delta<ElementPartial>>,
   ) {
     if (import.meta.env.DEV || import.meta.env.MODE === ENV.TEST) {
       ElementsChange.validateInvariants(
@@ -566,11 +569,8 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
 
   private static validateInvariants(
     type: "added" | "removed" | "updated",
-    deltas: Map<string, Delta<ExcalidrawElement>>,
-    satifiesInvariants: (
-      from: Partial<ExcalidrawElement>,
-      to: Partial<ExcalidrawElement>,
-    ) => boolean,
+    deltas: Map<string, Delta<ElementPartial>>,
+    satifiesInvariants: (from: ElementPartial, to: ElementPartial) => boolean,
   ) {
     for (const [id, delta] of deltas.entries()) {
       if (!satifiesInvariants(delta.from, delta.to)) {
@@ -599,17 +599,17 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
       return ElementsChange.empty();
     }
 
-    const added = new Map<string, Delta<T>>();
-    const removed = new Map<string, Delta<T>>();
-    const updated = new Map<string, Delta<T>>();
+    const added = new Map<string, Delta<ElementPartial>>();
+    const removed = new Map<string, Delta<ElementPartial>>();
+    const updated = new Map<string, Delta<ElementPartial>>();
 
     // This might be needed only in same edge cases, like during collab, when `isDeleted` elements get removed
     for (const prevElement of prevElements.values()) {
       const nextElement = nextElements.get(prevElement.id);
 
       if (!nextElement) {
-        const from = { ...prevElement, isDeleted: false } as T;
-        const to = { isDeleted: true } as T;
+        const from = { ...prevElement, isDeleted: false } as ElementPartial;
+        const to = { isDeleted: true } as ElementPartial;
 
         const delta = Delta.create(
           from,
@@ -617,7 +617,7 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
           ElementsChange.stripIrrelevantProps,
         );
 
-        removed.set(prevElement.id, delta as Delta<T>);
+        removed.set(prevElement.id, delta);
       }
     }
 
@@ -625,12 +625,12 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
       const prevElement = prevElements.get(nextElement.id);
 
       if (!prevElement) {
-        const from = { isDeleted: true } as T;
+        const from = { isDeleted: true } as ElementPartial;
         const to = {
           ...nextElement,
-          // Special case when an element is added as deleted (i.e. through the API).
-          isDeleted: nextElement.isDeleted || false,
-        } as T;
+          // Special case when an element is added as deleted (i.e. through the API). // isDeleted: nextElement.isDeleted
+          isDeleted: false,
+        } as ElementPartial;
 
         const delta = Delta.create(
           from,
@@ -638,7 +638,7 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
           ElementsChange.stripIrrelevantProps,
         );
 
-        added.set(nextElement.id, delta as Delta<T>);
+        added.set(nextElement.id, delta);
 
         continue;
       }
@@ -652,7 +652,7 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
         ) {
           const from = { ...prevElement };
           const to = { ...nextElement };
-          const delta = Delta.calculate<ExcalidrawElement>(
+          const delta = Delta.calculate<ElementPartial>(
             from,
             to,
             ElementsChange.stripIrrelevantProps,
@@ -661,12 +661,12 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
 
           // Notice that other props could have been updated as well
           if (prevElement.isDeleted && !nextElement.isDeleted) {
-            added.set(nextElement.id, delta as Delta<T>);
+            added.set(nextElement.id, delta);
           } else {
-            removed.set(nextElement.id, delta as Delta<T>);
+            removed.set(nextElement.id, delta);
           }
         } else {
-          const delta = Delta.calculate<ExcalidrawElement>(
+          const delta = Delta.calculate<ElementPartial>(
             prevElement,
             nextElement,
             ElementsChange.stripIrrelevantProps,
@@ -675,7 +675,7 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
 
           // Make sure there are at least some changes (except changes to irrelevant data)
           if (!Delta.isEmpty(delta)) {
-            updated.set(nextElement.id, delta as Delta<T>);
+            updated.set(nextElement.id, delta);
           }
         }
       }
@@ -689,8 +689,8 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
   }
 
   public inverse(): ElementsChange {
-    const inverseInternal = (deltas: Map<string, Delta<ExcalidrawElement>>) => {
-      const inversedDeltas = new Map<string, Delta<ExcalidrawElement>>();
+    const inverseInternal = (deltas: Map<string, Delta<ElementPartial>>) => {
+      const inversedDeltas = new Map<string, Delta<ElementPartial>>();
 
       for (const [id, delta] of deltas.entries()) {
         inversedDeltas.set(id, Delta.create(delta.to, delta.from));
@@ -716,45 +716,46 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
   }
 
   /**
-   * Update the delta/s based on the existing elements.
+   * Update only `updated` delta/s based on the existing elements.
+   * In comparison, `added` and `removed` deltas are not updated as it would cause our invariants to break.
+   *
+   * Also, i.e. not updating `added` deltas allow the element author to always restore his
+   * remotely deleted element/s through a series of undos & redos.
    *
    * @param elements current elements
    * @param modifierOptions defines which of the delta (`from` or `to`) will be updated
    * @returns new instance with modified delta/s
    */
   public applyLatestChanges(
-    elements: Map<string, ExcalidrawElement>,
+    elements: ReadonlyMap<string, ExcalidrawElement>,
     modifierOptions: "from" | "to",
   ): ElementsChange {
     const modifier =
-      (element: ExcalidrawElement) => (partial: Partial<ExcalidrawElement>) => {
-        const updatedPartial = { ...partial };
+      (element: ExcalidrawElement) => (partial: ElementPartial) => {
+        const latestPartial: { [key: string]: unknown } = {};
 
-        for (const key of Object.keys(updatedPartial) as Array<
-          keyof typeof partial
-        >) {
-          // TODO_UNDO: `isDeleted` shouldn't be modified, otherwise invariants will fail, this also means one can always redo his own creation - add test cases
-          // TODO_UNDO: figure out whether updating reference deltas (i.e. boundElemenmakes) any sense (maybe just on deletion, but not worth doing now) - add test case
+        for (const key of Object.keys(partial) as Array<keyof typeof partial>) {
           if (
-            key === "isDeleted" ||
             key === "boundElements" ||
             key === "groupIds" ||
             key === "customData"
           ) {
-            continue;
+            // It doesn't make sense to update the above props since:
+            // - `boundElements` and `groupIds` are reference values which are represent just as removed/added changes in the delta
+            // - `customData` can be anything
+            latestPartial[key] = partial[key];
+          } else {
+            latestPartial[key] = element[key];
           }
-
-          // TODO: fix typing
-          (updatedPartial as any)[key] = element[key];
         }
 
-        return updatedPartial;
+        return latestPartial;
       };
 
     const applyLatestChangesInternal = (
-      deltas: Map<string, Delta<ExcalidrawElement>>,
+      deltas: Map<string, Delta<ElementPartial>>,
     ) => {
-      const modifiedDeltas = new Map<string, Delta<ExcalidrawElement>>();
+      const modifiedDeltas = new Map<string, Delta<ElementPartial>>();
 
       for (const [id, delta] of deltas.entries()) {
         const existingElement = elements.get(id);
@@ -777,133 +778,121 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
       return modifiedDeltas;
     };
 
-    const added = applyLatestChangesInternal(this.added);
-    const removed = applyLatestChangesInternal(this.removed);
     const updated = applyLatestChangesInternal(this.updated);
 
-    return ElementsChange.create(added, removed, updated);
+    return ElementsChange.create(this.added, this.removed, updated);
   }
 
-  // For future reference, we might want to "rebase" the change itself instead, so it could be shared to other clients
+  // For future reference, we might want to "rebase" the change itself instead (or create new increment), so it could be shared to other clients
   public applyTo(
-    elements: Readonly<Map<string, ExcalidrawElement>>,
+    elements: Map<string, ExcalidrawElement>,
+    snapshot: ReadonlyMap<string, ExcalidrawElement>,
   ): [Map<string, ExcalidrawElement>, boolean] {
-    let containsVisibleDifference = false;
+    const changedElements = new Map<string, ExcalidrawElement>();
 
-    // TODO_UNDO: would rather check for no visible differences so that we don't accidently iterate in the history stack
-    const checkForVisibleDifference = (
-      prevElement: ExcalidrawElement | void,
-      nextElement: ExcalidrawElement,
-    ) => {
-      if (!containsVisibleDifference) {
-        if (!prevElement) {
-          if (nextElement.isDeleted === false) {
-            // When we have an addition of an element in history, but it was removed completely from the scene and now we will restore it
-            containsVisibleDifference = true;
-          }
-        } else if (prevElement.isDeleted && nextElement.isDeleted === false) {
-          // When delta adds an element, it results in a visible change
-          containsVisibleDifference = true;
-        } else if (!prevElement.isDeleted) {
-          if (nextElement.isDeleted) {
-            // When delta removes visible element, it results in a visible change
-            containsVisibleDifference = true;
-          } else {
-            // Check for any difference on a visible element
-            // Notice we go through all deltas regardless,
-            // as visible changes could also be inside added changes (not just updated)
-            containsVisibleDifference = Delta.isRightDifferent(
-              nextElement,
-              prevElement,
-            );
-          }
+    function setElements(
+      ...updatedElements: (ExcalidrawElement | undefined)[]
+    ) {
+      for (const element of updatedElements) {
+        if (element) {
+          elements.set(element.id, element);
+          changedElements.set(element.id, element);
         }
-      }
-    };
-
-    const addedElements = new Map();
-    const removedElements = new Map();
-    const updatedElements = new Map();
-
-    for (const [id, delta] of this.removed.entries()) {
-      const existingElement = elements.get(id);
-
-      if (existingElement) {
-        const removedElement = ElementsChange.applyDelta(
-          existingElement,
-          delta,
-          elements,
-        );
-        elements.set(id, removedElement);
-        removedElements.set(id, removedElement);
-        checkForVisibleDifference(existingElement, removedElement);
-        this.removeBoundText(removedElement, elements);
       }
     }
 
-    for (const [id, delta] of this.added.entries()) {
-      const existingElement = elements.get(id);
+    let containsVisibleDifference = false;
 
-      let addedElement = null;
+    function checkForVisibleDifference(
+      element: ExcalidrawElement,
+      partial: ElementPartial,
+    ) {
+      if (!containsVisibleDifference) {
+        containsVisibleDifference = ElementsChange.checkForVisibleDifference(
+          element,
+          partial,
+        );
+      }
+    }
+
+    for (const [id, delta] of this.removed.entries()) {
+      const existingElement = elements.get(id) ?? snapshot.get(id);
+
       if (existingElement) {
-        addedElement = ElementsChange.applyDelta(
+        const [removedElement, partial] = ElementsChange.applyDelta(
           existingElement,
           delta,
           elements,
         );
-      } else {
-        addedElement = ElementsChange.applyDelta(
-          { id } as ExcalidrawElement,
-          delta,
+
+        checkForVisibleDifference(existingElement, partial);
+
+        const removedBoundText = ElementsChange.removeBoundText(
+          removedElement,
           elements,
         );
-      }
 
-      if (addedElement) {
-        elements.set(id, addedElement);
-        addedElements.set(id, addedElement);
-        checkForVisibleDifference(existingElement, addedElement);
-        // If we would be persisting history, restoring might be problematic if we would not be persiting deleted elements
-        this.restoreBoundText(addedElement, elements);
-        this.restoreContainer(addedElement, elements);
+        setElements(removedElement, removedBoundText);
       }
     }
 
     for (const [id, delta] of this.updated.entries()) {
-      const existingElement = elements.get(id);
+      // TODO_UNDO: revisit if this makes sense to always fallback to snapshot
+      const existingElement = elements.get(id) ?? snapshot.get(id);
 
       if (existingElement) {
-        const updatedElement = ElementsChange.applyDelta(
+        const [updatedElement, partial] = ElementsChange.applyDelta(
           existingElement,
           delta,
           elements,
         );
-        elements.set(id, updatedElement);
-        updatedElements.set(id, updatedElement);
-        checkForVisibleDifference(existingElement, updatedElement);
+
+        checkForVisibleDifference(existingElement, partial);
+        setElements(updatedElement);
       }
     }
 
-    // Playing it safe for now, but below mutators would deserve to be rewritten
-    fixBindingsAfterDeletion(
-      Array.from(elements.values()),
-      Array.from(removedElements.values()),
-      false,
-    );
+    for (const [id, delta] of this.added.entries()) {
+      const existingElement = elements.get(id) ?? snapshot.get(id);
 
-    ElementsChange.redrawTextBoundingBoxes(
-      elements,
-      new Map([...addedElements, ...updatedElements]),
-    );
+      let addedElement = null;
+      let partial = null;
+
+      if (existingElement) {
+        [addedElement, partial] = ElementsChange.applyDelta(
+          existingElement,
+          delta,
+          elements,
+        );
+
+        checkForVisibleDifference(existingElement, partial);
+      }
+
+      if (addedElement) {
+        const restoredText = ElementsChange.restoreBoundText(
+          addedElement,
+          elements,
+        );
+
+        const restoredContainer = ElementsChange.restoreDeletedContainer(
+          addedElement,
+          elements,
+        );
+
+        setElements(addedElement, restoredText, restoredContainer);
+      }
+    }
+
+    ElementsChange.postfixBindings(changedElements, elements);
 
     return [elements, containsVisibleDifference];
   }
 
   private static applyDelta(
     element: ExcalidrawElement,
-    delta: Delta<ExcalidrawElement>,
-    elements: Map<string, ExcalidrawElement>,
-  ) {
+    delta: Delta<ElementPartial>,
+    elements: ReadonlyMap<string, ExcalidrawElement>,
+  ): [ExcalidrawElement, ElementPartial] {
     const { boundElements: removedBoundElements, groupIds: removedGroupIds } =
       delta.from;
 
@@ -917,23 +906,27 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
 
     let nextBoundElements = boundElements;
     if (addedBoundElements?.length || removedBoundElements?.length) {
-      const modifiedBoundElements = this.removedBoundTextElements(
-        boundElements ?? [],
-        addedBoundElements ?? [],
-        elements,
-      );
+      // If we are adding/updating container bound elements with text,
+      // make sure to unbind existing text first, so we don't end up with duplicates.
+      if (
+        addedBoundElements?.length &&
+        addedBoundElements.find((x) => x.type === "text")
+      ) {
+        nextBoundElements = ElementsChange.unbindExistingTextElements(
+          nextBoundElements ?? [],
+          elements,
+        );
+      }
 
       const mergedBoundElements = Object.values(
         Delta.merge(
-          arrayToObject(modifiedBoundElements, (x) => x.id),
+          arrayToObject(nextBoundElements ?? [], (x) => x.id),
           arrayToObject(addedBoundElements ?? [], (x) => x.id),
           arrayToObject(removedBoundElements ?? [], (x) => x.id),
         ),
       );
 
-      nextBoundElements = mergedBoundElements.length
-        ? mergedBoundElements
-        : null;
+      nextBoundElements = mergedBoundElements;
     }
 
     let nextGroupIds = groupIds;
@@ -948,83 +941,80 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
       nextGroupIds = mergedGroupIds;
     }
 
-    const updates: ElementUpdate<ExcalidrawElement> = {
+    const mergedPartial: ElementPartial = {
       ...directlyApplicablePartial,
       boundElements: nextBoundElements,
       groupIds: nextGroupIds,
     };
 
-    return newElementWith(element, updates, true);
+    const updatedElement = newElementWith(element, mergedPartial);
+
+    return [updatedElement, mergedPartial];
   }
 
   /**
-   * If we are adding text, make sure to unbind existing text first, so we don't end up with duplicates.
+   * Check for visible changes regardless of whether they were removed, added or updated.
    */
-  private static removedBoundTextElements(
-    boundElements: readonly BoundElement[],
-    addedBoundElements: readonly BoundElement[],
-    elements: Map<string, ExcalidrawElement>,
-  ): readonly BoundElement[] {
-    if (!addedBoundElements.find((x) => x.type === "text")) {
-      return boundElements;
+  private static checkForVisibleDifference(
+    element: ExcalidrawElement,
+    partial: ElementPartial,
+  ) {
+    if (element.isDeleted && partial.isDeleted !== false) {
+      // When it's deleted and partial is not false, it cannot end up with a visible change
+      return false;
     }
 
+    if (element.isDeleted && partial.isDeleted === false) {
+      // When we add an element, it results in a visible change
+      return true;
+    }
+
+    if (element.isDeleted === false && partial.isDeleted) {
+      // When we remove an element, it results in a visible change
+      return true;
+    }
+
+    // Check for any difference on a visible element
+    return Delta.isRightDifferent(element, partial);
+  }
+
+  /**
+   * Note: performs mutation, which we might want to refactor away, not to end up in an inconsistent state.
+   */
+  private static unbindExistingTextElements(
+    boundElements: readonly BoundElement[],
+    elements: ReadonlyMap<string, ExcalidrawElement>,
+  ): readonly BoundElement[] | null {
     const boundTextElements = boundElements.filter((x) => x.type === "text");
 
     for (const { id } of boundTextElements) {
       const element = elements.get(id);
 
       if (element) {
-        const removed = newElementWith(
+        mutateElement(
           element as ExcalidrawTextElement,
           {
             isDeleted: true,
-            containerId: undefined,
+            containerId: null,
           },
-          true,
+          false,
         );
-        elements.set(element.id, removed);
       }
     }
 
-    return boundElements.filter((x) => x.type !== "text");
+    const nextBoundTextElements = boundElements.filter(
+      (x) => x.type !== "text",
+    );
+
+    return nextBoundTextElements.length ? nextBoundTextElements : null;
   }
 
   /**
-   * When text bindable container is removed through history, we need to:
-   * - remove bound text (don't remove bindings, so we could restore it again)
+   * When text bindable container is removed through history, we need to remove bound text.
    */
-  private removeBoundText(
+  private static removeBoundText(
     container: ExcalidrawElement,
-    elements: Map<string, ExcalidrawElement>,
-  ) {
-    if (!hasBoundTextElement(container)) {
-      return;
-    }
-
-    const boundTextElementId = getBoundTextElementId(container) || "";
-    const textElement = elements.get(boundTextElementId);
-
-    if (textElement && !textElement.isDeleted) {
-      const removed = newElementWith(
-        textElement as ExcalidrawTextElement,
-        {
-          isDeleted: true,
-          containerId: undefined,
-        },
-        true,
-      );
-      elements.set(textElement.id, removed);
-    }
-  }
-
-  /**
-   * When text bindable container is added through history (restored), we need to:
-   * - restore bound text if it was deleted with history action (we don't remove bindings on removal)
-   */
-  private restoreBoundText(
-    container: ExcalidrawElement,
-    elements: Map<string, ExcalidrawElement>,
+    elements: ReadonlyMap<string, ExcalidrawElement>,
   ) {
     if (!hasBoundTextElement(container)) {
       return;
@@ -1033,59 +1023,67 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
     const boundTextElementId = getBoundTextElementId(container) || "";
     const boundText = elements.get(boundTextElementId);
 
-    if (boundText && boundText.isDeleted) {
-      const restored = newElementWith(boundText, { isDeleted: false });
-      elements.set(boundText.id, restored);
+    if (boundText && !boundText.isDeleted) {
+      return newElementWith(boundText as ExcalidrawTextElement, {
+        isDeleted: true,
+      });
     }
   }
 
   /**
-   * When bounded text is added through a history (restored), we need to:
-   * - unbind the text if container cannot be found
-   * - restore container if was deleted
-   * - repair container bindings if there are already some bound text elements
-   * - update props of the bound text and container
-   *
-   * Looks like similar to what we are doing inside restore.ts (i.e. repairBoundElement)
+   * When text bindable container is added through history, we need to restore it's bound text.
    */
-  private restoreContainer(
-    boundText: ExcalidrawElement,
-    elements: Map<string, ExcalidrawElement>,
+  private static restoreBoundText(
+    element: ExcalidrawElement,
+    elements: ReadonlyMap<string, ExcalidrawElement>,
   ) {
-    if (isBoundToContainer(boundText)) {
-      const container = elements.get(boundText.containerId);
+    if (hasBoundTextElement(element)) {
+      const boundTextElementId = getBoundTextElementId(element) || "";
+      const boundText = elements.get(boundTextElementId);
 
-      if (container) {
-        if (container?.isDeleted) {
-          // Restore the container
-          const restored = newElementWith(container, { isDeleted: false });
-          elements.set(container.id, restored);
-        }
-      } else {
-        // Delete the binding to the container if it's not found
-        const unbound = newElementWith(
-          boundText,
-          {
-            containerId: undefined,
-          },
-          true,
-        );
-        elements.set(boundText.id, unbound);
+      if (boundText && boundText.isDeleted) {
+        return newElementWith(boundText, { isDeleted: false });
       }
     }
   }
 
-  private static redrawTextBoundingBoxes(
-    elements: Map<string, ExcalidrawElement>,
-    changed: Map<string, ExcalidrawElement>,
+  /**
+   * When bound text is added through a history, we need to restore the container if it was deleted.
+   */
+  private static restoreDeletedContainer(
+    element: ExcalidrawElement,
+    elements: ReadonlyMap<string, ExcalidrawElement>,
   ) {
-    const containerTextMapping = new Map();
+    if (isBoundToContainer(element)) {
+      const container = elements.get(element.containerId);
 
-    for (const element of changed.values()) {
-      if (element.isDeleted) {
-        continue;
+      if (container) {
+        if (container.isDeleted) {
+          // Restore the container
+          return newElementWith(container, { isDeleted: false });
+        }
       }
+    }
+  }
 
+  /**
+   * It could happen that bindings are out of sync due to incremental history operations,
+   * or that they are in sync, but end up in an incosistent state (i.e. container in a different position / angle, smaller than a bound text, etc.).
+   *
+   * We are trying to fix all such cases in the following method.
+   *
+   * Note: performs mutations.
+   */
+  private static postfixBindings(
+    changedElements: ReadonlyMap<string, ExcalidrawElement>,
+    elements: ReadonlyMap<string, ExcalidrawElement>,
+  ) {
+    const containerTextMapping = new Map<
+      string,
+      { container: ExcalidrawElement; boundText: ExcalidrawTextElement }
+    >();
+
+    for (const element of changedElements.values()) {
       if (hasBoundTextElement(element)) {
         const boundTextElementId = getBoundTextElementId(element) || "";
         const boundText = elements.get(boundTextElementId);
@@ -1093,14 +1091,14 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
         if (boundText) {
           containerTextMapping.set(element.id, {
             container: element,
-            boundText,
+            boundText: boundText as ExcalidrawTextElement,
           });
         }
       } else if (isBoundToContainer(element)) {
         const container = elements.get(element.containerId);
 
         if (container) {
-          containerTextMapping.set(element.id, {
+          containerTextMapping.set(container.id, {
             container,
             boundText: element,
           });
@@ -1109,24 +1107,68 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
     }
 
     for (const { container, boundText } of containerTextMapping.values()) {
+      this.resyncTextBindings(boundText, container, elements);
       redrawTextBoundingBox(boundText, container, false);
     }
   }
 
-  private static stripIrrelevantProps(partial: Partial<ExcalidrawElement>) {
-    const { id, updated, version, versionNonce, ...strippedPartial } = partial;
+  private static resyncTextBindings(
+    boundText: ExcalidrawTextElement,
+    container: ExcalidrawElement,
+    elements: ReadonlyMap<string, ExcalidrawElement>,
+  ) {
+    if (
+      !container.boundElements ||
+      !container.boundElements.find((x) => x.id === boundText.id)
+    ) {
+      const nextBoundElements = ElementsChange.unbindExistingTextElements(
+        container.boundElements ?? [],
+        elements,
+      );
 
-    return strippedPartial;
+      mutateElement(
+        container,
+        {
+          boundElements: (nextBoundElements ?? []).concat({
+            type: "text",
+            id: boundText.id,
+          }),
+        },
+        false,
+      );
+    }
+
+    if (boundText.containerId !== container.id) {
+      mutateElement(boundText, { containerId: container.id }, false);
+    }
+
+    // Handle a special case when one of them is deleted,
+    // we do wait for sync first (to be sure the binding is bidirectional),
+    // then we safely unbind it from both elements.
+    if (boundText.isDeleted !== container.isDeleted) {
+      const nextBoundElements = ElementsChange.unbindExistingTextElements(
+        container.boundElements ?? [],
+        elements,
+      );
+
+      mutateElement(
+        container,
+        {
+          boundElements: nextBoundElements,
+        },
+        false,
+      );
+    }
   }
 
   /**
    * It is necessary to post process the partials in case of reference values,
    * for which we need to calculate the real diff between `from` and `to`.
    */
-  private static postProcess<T extends ExcalidrawElement>(
-    from: Partial<T>,
-    to: Partial<T>,
-  ): [Partial<T>, Partial<T>] {
+  private static postProcess(
+    from: ElementPartial,
+    to: ElementPartial,
+  ): [ElementPartial, ElementPartial] {
     if (from.boundElements && to.boundElements) {
       const fromDifferences = arrayToObject(
         Delta.getLeftDifferences(
@@ -1148,8 +1190,8 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
         ({ id }) => !!toDifferences[id],
       );
 
-      (from as Mutable<Partial<T>>).boundElements = fromBoundElements;
-      (to as Mutable<Partial<T>>).boundElements = toBoundElements;
+      (from as Mutable<typeof from>).boundElements = fromBoundElements;
+      (to as Mutable<typeof to>).boundElements = toBoundElements;
     }
 
     if (from.groupIds && to.groupIds) {
@@ -1173,10 +1215,20 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
         (groupId) => !!toDifferences[groupId],
       );
 
-      (from as Mutable<Partial<T>>).groupIds = fromGroupIds;
-      (to as Mutable<Partial<T>>).groupIds = toGroupIds;
+      (from as Mutable<typeof from>).groupIds = fromGroupIds;
+      (to as Mutable<typeof to>).groupIds = toGroupIds;
     }
 
     return [from, to];
+  }
+
+  private static stripIrrelevantProps(
+    partial: Partial<ExcalidrawElement>,
+  ): ElementPartial {
+    // TODO: add more typesafety
+    const { id, updated, version, versionNonce, seed, ...strippedPartial } =
+      partial;
+
+    return strippedPartial;
   }
 }

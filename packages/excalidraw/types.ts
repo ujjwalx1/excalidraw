@@ -339,7 +339,7 @@ export type AppState = {
   userToFollow: UserToFollow | null;
   /** the clientIds of the users following the current user */
   followedBy: Set<SocketId>;
-}
+};
 
 export type UIAppState = Omit<
   AppState,
