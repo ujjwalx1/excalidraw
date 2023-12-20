@@ -2655,7 +2655,7 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
   "groupIds": [],
   "height": 100,
   "id": "id25",
-  "isDeleted": true,
+  "isDeleted": false,
   "link": null,
   "locked": false,
   "opacity": 100,
@@ -2668,7 +2668,7 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
   "strokeWidth": 2,
   "type": "rectangle",
   "updated": 1,
-  "version": 2,
+  "version": 3,
   "width": 100,
   "x": 20,
   "y": 20,
@@ -2685,7 +2685,7 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
   "groupIds": [],
   "height": 100,
   "id": "id26",
-  "isDeleted": true,
+  "isDeleted": false,
   "link": null,
   "locked": false,
   "opacity": 100,
@@ -2698,7 +2698,7 @@ exports[`history > multiplayer undo/redo > should iterate through the history wh
   "strokeWidth": 2,
   "type": "rectangle",
   "updated": 1,
-  "version": 2,
+  "version": 3,
   "width": 100,
   "x": 30,
   "y": 30,
@@ -2862,7 +2862,7 @@ History {
 
 exports[`history > multiplayer undo/redo > should iterate through the history when selection changes relate only to remotely deleted elements > [end of test] number of elements 1`] = `3`;
 
-exports[`history > multiplayer undo/redo > should iterate through the history when selection changes relate only to remotely deleted elements > [end of test] number of renders 1`] = `11`;
+exports[`history > multiplayer undo/redo > should iterate through the history when selection changes relate only to remotely deleted elements > [end of test] number of renders 1`] = `15`;
 
 exports[`history > multiplayer undo/redo > should not let remote changes to interfere with in progress dragging > [end of test] appState 1`] = `
 {

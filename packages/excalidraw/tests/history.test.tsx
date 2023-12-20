@@ -357,7 +357,7 @@ describe("history", () => {
     Keyboard.undo();
     expect(API.getUndoStack().length).toBe(0);
     expect(API.getRedoStack().length).toBe(1);
-    expect(API.getSelectedElements().length).toBe(0);
+    expect(API.getSelectedElements()).toEqual([]);
     expect(h.elements).toEqual([
       expect.objectContaining({ id: rect1.id, isDeleted: true }),
     ]);
@@ -622,7 +622,7 @@ describe("history", () => {
         ],
       });
 
-      expect(API.getSelectedElements().length).toBe(0);
+      expect(API.getSelectedElements()).toEqual([]);
       expect(h.elements).toEqual([
         expect.objectContaining({
           backgroundColor: yellow,
@@ -642,7 +642,7 @@ describe("history", () => {
       ]);
 
       Keyboard.undo();
-      expect(API.getSelectedElements().length).toBe(0);
+      expect(API.getSelectedElements()).toEqual([]);
       expect(API.getUndoStack().length).toBe(0);
       expect(API.getRedoStack().length).toBe(2);
       expect(h.elements).toEqual([
@@ -666,7 +666,7 @@ describe("history", () => {
       // We do not expect our `backgroundColor` to be updated into `yellow`,
       // to allow to get to the same point the element was at the time of the removal.
       Keyboard.redo();
-      expect(API.getSelectedElements().length).toBe(0);
+      expect(API.getSelectedElements()).toEqual([]);
       expect(API.getUndoStack().length).toBe(2);
       expect(API.getRedoStack().length).toBe(0);
       expect(h.elements).toEqual([
@@ -833,6 +833,10 @@ describe("history", () => {
       mouse.select([rect2, rect3]);
 
       expect(API.getUndoStack().length).toBe(3);
+      expect(API.getSelectedElements()).toEqual([
+        expect.objectContaining({ id: rect2.id }),
+        expect.objectContaining({ id: rect3.id }),
+      ]);
 
       // Simulate remote update
       excalidrawAPI.updateScene({
@@ -851,15 +855,59 @@ describe("history", () => {
       expect(API.getUndoStack().length).toBe(1);
       expect(API.getRedoStack().length).toBe(2);
       expect(API.getSelectedElements()).toEqual([
-        expect.objectContaining({ id: rect1.id }),
+        expect.objectContaining({ id: rect1.id, isDeleted: false }),
       ]);
 
       Keyboard.redo();
       expect(API.getUndoStack().length).toBe(3);
       expect(API.getRedoStack().length).toBe(0);
+      // do not expect any selectedElementIds, as all relate to deleted elements
+      expect(API.getSelectedElements()).toEqual([]);
+      expect(h.elements).toEqual([
+        expect.objectContaining({ id: rect1.id, isDeleted: false }),
+        expect.objectContaining({ id: rect2.id, isDeleted: true }),
+        expect.objectContaining({ id: rect3.id, isDeleted: true }),
+      ]);
+
+      Keyboard.undo();
+      expect(API.getUndoStack().length).toBe(1);
+      expect(API.getRedoStack().length).toBe(2);
+      expect(API.getSelectedElements()).toEqual([
+        expect.objectContaining({ id: rect1.id, isDeleted: false }),
+      ]);
+
+      // Simulate remote update
+      excalidrawAPI.updateScene({
+        elements: [
+          h.elements[0],
+          newElementWith(h.elements[1], {
+            isDeleted: false,
+          }),
+          newElementWith(h.elements[2], {
+            isDeleted: false,
+          }),
+        ],
+      });
+
+      Keyboard.redo();
+      expect(API.getUndoStack().length).toBe(2);
+      expect(API.getRedoStack().length).toBe(1);
+      expect(API.getSelectedElements()).toEqual([
+        expect.objectContaining({ id: rect2.id, isDeleted: false }),
+      ]);
+
+      Keyboard.redo();
+      expect(API.getUndoStack().length).toBe(3);
+      expect(API.getRedoStack().length).toBe(0);
+      // now we again expect these as selected, as they got restored remotely
       expect(API.getSelectedElements()).toEqual([
         expect.objectContaining({ id: rect2.id }),
         expect.objectContaining({ id: rect3.id }),
+      ]);
+      expect(h.elements).toEqual([
+        expect.objectContaining({ id: rect1.id, isDeleted: false }),
+        expect.objectContaining({ id: rect2.id, isDeleted: false }),
+        expect.objectContaining({ id: rect3.id, isDeleted: false }),
       ]);
     });
 
@@ -961,7 +1009,7 @@ describe("history", () => {
       ]);
 
       Keyboard.undo();
-      expect(API.getSelectedElements.length).toBe(0);
+      expect(API.getSelectedElements()).toEqual([]);
       expect(h.elements).toEqual([
         expect.objectContaining({
           id: rect1.id,

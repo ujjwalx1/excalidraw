@@ -265,7 +265,6 @@ export class AppStateChange implements Change<AppState> {
     return new AppStateChange(inversedDelta);
   }
 
-  // TODO_UNDO: filter out appState related to deleted elements
   public applyTo(
     appState: Readonly<AppState>,
     elements: ReadonlyMap<string, ExcalidrawElement>,
@@ -300,7 +299,7 @@ export class AppStateChange implements Change<AppState> {
       selectedGroupIds: mergedSelectedGroupIds,
     };
 
-    const constainsVisibleChanges = this.checkForVisibleChanges(
+    const constainsVisibleChanges = this.filterInvisibleChanges(
       appState,
       nextAppState,
       elements,
@@ -366,11 +365,17 @@ export class AppStateChange implements Change<AppState> {
     return [from, to];
   }
 
-  private checkForVisibleChanges(
+  /**
+   * Mutates `nextAppState` be filtering out state related to deleted elements.
+   *
+   * @returns `true` if a visible change is found, `false` otherwise.
+   */
+  private filterInvisibleChanges(
     prevAppState: AppState,
     nextAppState: ObservedAppState,
     nextElements: ReadonlyMap<string, ExcalidrawElement>,
   ): boolean {
+    const visibleDifferenceFlag = { value: false };
     const containsStandaloneDifference = Delta.isRightDifferent(
       prevAppState,
       AppStateChange.stripElementsProps(nextAppState),
@@ -378,7 +383,7 @@ export class AppStateChange implements Change<AppState> {
 
     if (containsStandaloneDifference) {
       // We detected a a difference which is unrelated to the elements
-      return true;
+      visibleDifferenceFlag.value = true;
     }
 
     const containsElementsDifference = Delta.isRightDifferent(
@@ -388,7 +393,7 @@ export class AppStateChange implements Change<AppState> {
 
     if (!containsStandaloneDifference && !containsElementsDifference) {
       // There is no difference detected at all
-      return false;
+      visibleDifferenceFlag.value = false;
     }
 
     // We need to handle elements differences separately,
@@ -402,29 +407,31 @@ export class AppStateChange implements Change<AppState> {
     for (const key of changedDeltaKeys) {
       switch (key) {
         case "selectedElementIds":
-          if (
-            AppStateChange.checkForSelectedElementsDifferences(
-              nextAppState,
+          nextAppState.selectedElementIds =
+            AppStateChange.filterSelectedElements(
+              nextAppState[key],
               nextElements,
-            )
-          ) {
-            return true;
-          }
+              visibleDifferenceFlag,
+            );
           break;
         case "selectedLinearElement":
         case "editingLinearElement":
-          if (
-            AppStateChange.checkForLinearElementDifferences(
-              nextAppState[key],
-              nextElements,
-            )
-          ) {
-            return true;
-          }
+          nextAppState[key] = AppStateChange.filterLinearElement(
+            nextAppState[key],
+            nextElements,
+            visibleDifferenceFlag,
+          );
           break;
         case "editingGroupId":
         case "selectedGroupIds":
-          return AppStateChange.checkForGroupsDifferences();
+          // Currently we don't have an index of elements by groupIds, which means that
+          // the calculation for getting the visible elements based on the groupIds stored in delta
+          // is not worth performing - due to perf. and dev. complexity.
+          //
+          // Therefore we are accepting in these cases empty undos / redos, which should be pretty rare:
+          // - only when one of these (or both) are in delta and the are no non deleted elements containing these group ids
+          visibleDifferenceFlag.value = true;
+          break;
         default: {
           assertNever(
             key,
@@ -435,57 +442,53 @@ export class AppStateChange implements Change<AppState> {
       }
     }
 
-    return false;
+    return visibleDifferenceFlag.value;
   }
 
-  private static checkForSelectedElementsDifferences(
-    appState: Pick<ObservedElementsAppState, "selectedElementIds">,
+  private static filterSelectedElements(
+    selectedElementIds: ObservedElementsAppState["selectedElementIds"],
     elements: ReadonlyMap<string, ExcalidrawElement>,
+    visibleDifferenceFlag: { value: boolean },
   ) {
-    // TODO_UNDO: it could have been visible before (and now it's not)
-    for (const id of Object.keys(appState.selectedElementIds)) {
+    const nextSelectedElementIds = { ...selectedElementIds };
+
+    for (const id of Object.keys(selectedElementIds)) {
       const element = elements.get(id);
 
       if (element && !element.isDeleted) {
-        // // TODO_UNDO: breaks multi selection
-        // if (appState.selectedElementIds[id]) {
-        //   // Element is already selected
-        //   return;
-        // }
-
         // Found related visible element!
-        return true;
+        visibleDifferenceFlag.value = true;
+      } else {
+        delete nextSelectedElementIds[id];
       }
     }
+
+    return nextSelectedElementIds;
   }
 
-  private static checkForLinearElementDifferences(
+  private static filterLinearElement(
     linearElement:
       | ObservedElementsAppState["editingLinearElement"]
-      | ObservedAppState["selectedLinearElement"]
-      | undefined,
+      | ObservedAppState["selectedLinearElement"],
     elements: ReadonlyMap<string, ExcalidrawElement>,
+    visibleDifferenceFlag: { value: boolean },
   ) {
     if (!linearElement) {
-      return;
+      return null;
     }
+
+    let result: typeof linearElement | null = linearElement;
 
     const element = elements.get(linearElement.elementId);
 
     if (element && !element.isDeleted) {
       // Found related visible element!
-      return true;
+      visibleDifferenceFlag.value = true;
+    } else {
+      result = null;
     }
-  }
 
-  // Currently we don't have an index of elements by groupIds, which means
-  // the calculation for getting the visible elements based on the groupIds stored in delta
-  // is not worth performing - due to perf. and dev. complexity.
-  //
-  // Therefore we are accepting in these cases empty undos / redos, which should be pretty rare:
-  // - only when one of these (or both) are in delta and the are no non deleted elements containing these group ids
-  private static checkForGroupsDifferences() {
-    return true;
+    return result;
   }
 
   private static stripElementsProps(
@@ -790,6 +793,10 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
   ): [Map<string, ExcalidrawElement>, boolean] {
     const visibleDifferenceFlag = { value: false };
     const changedElements = new Map<string, ExcalidrawElement>();
+    const containerTextMapping = new Map<
+      string,
+      { container: ExcalidrawElement; boundText: ExcalidrawTextElement }
+    >();
 
     function setElements(
       ...updatedElements: (ExcalidrawElement | undefined)[]
@@ -798,6 +805,34 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
         if (element) {
           elements.set(element.id, element);
           changedElements.set(element.id, element);
+
+          if (ElementsChange.whenBoundText(element)) {
+            const { containerId } = element as ExcalidrawTextElement;
+            const container = containerId
+              ? elements.get(containerId)
+              : undefined;
+
+            if (container) {
+              containerTextMapping.set(container.id, {
+                container,
+                boundText: element as ExcalidrawTextElement,
+              });
+            }
+          }
+
+          if (ElementsChange.whenTextContainer(element)) {
+            const boundTextElementId = getBoundTextElementId(element);
+            const boundText = boundTextElementId
+              ? elements.get(boundTextElementId)
+              : undefined;
+
+            if (boundText) {
+              containerTextMapping.set(element.id, {
+                container: element,
+                boundText: boundText as ExcalidrawTextElement,
+              });
+            }
+          }
         }
       }
     }
@@ -867,8 +902,18 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
       }
     }
 
-    // TODO: refactor mutations away, so we couln't end up in an incosistent state
-    ElementsChange.redrawTextBoundingBoxes(changedElements, elements);
+    for (const { container, boundText } of containerTextMapping.values()) {
+      if (container.isDeleted || boundText.isDeleted) {
+        // Skip on deleted container or bound text, sa it doesn't result in visible changes so we don't need to redraw
+        continue;
+      }
+
+      // TODO: this is a huge bottleneck which can take up to 96% of undo / redo computation time
+      // TODO: refactor mutations away, so we couln't end up in an incosistent state
+      // It could happen that bindings will due to incremental history operations end up in
+      // an incosistent state (i.e. container in a different position / angle, smaller than a bound text, etc.).
+      redrawTextBoundingBox(boundText, container, false);
+    }
 
     return [elements, visibleDifferenceFlag.value];
   }
@@ -1071,7 +1116,9 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
         updates.isDeleted = false;
       }
 
-      return newElementWith(boundText, updates);
+      if (Object.keys(updates).length) {
+        return newElementWith(boundText, updates);
+      }
     }
   }
 
@@ -1094,60 +1141,6 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
       return newElementWith(boundText as ExcalidrawTextElement, {
         containerId: null,
       });
-    }
-  }
-
-  /**
-   * It could happen that bindings are out of sync due to incremental history operations,
-   * or that they are in sync, but end up in an incosistent state (i.e. container in a different position / angle, smaller than a bound text, etc.).
-   *
-   * We are trying to fix all such cases in the following method.
-   *
-   * Note: performs mutations.
-   */
-  private static redrawTextBoundingBoxes(
-    changedElements: ReadonlyMap<string, ExcalidrawElement>,
-    elements: ReadonlyMap<string, ExcalidrawElement>,
-  ) {
-    const containerTextMapping = new Map<
-      string,
-      { container: ExcalidrawElement; boundText: ExcalidrawTextElement }
-    >();
-
-    for (const element of changedElements.values()) {
-      if (hasBoundTextElement(element)) {
-        const boundTextElementId = getBoundTextElementId(element);
-        const boundText = boundTextElementId
-          ? elements.get(boundTextElementId)
-          : undefined;
-
-        if (boundText) {
-          containerTextMapping.set(element.id, {
-            container: element,
-            boundText: boundText as ExcalidrawTextElement,
-          });
-        }
-      } else if (isBoundToContainer(element)) {
-        const container = elements.get(element.containerId);
-
-        if (container) {
-          containerTextMapping.set(container.id, {
-            container,
-            boundText: element,
-          });
-        }
-      }
-    }
-
-    for (const { container, boundText } of containerTextMapping.values()) {
-      if (container.isDeleted || boundText.isDeleted) {
-        // Skip on deleted container or bound text, sa it doesn't result in visible changes so we don't need to redraw
-        continue;
-      }
-      // this.resyncTextBindings(boundText, container, elements);
-      // TODO: this is a huge bottleneck which can take up to 96% of undo / redo computation time
-      // TODO: I might not need to redraw deletions, I could do it on add / update only
-      redrawTextBoundingBox(boundText, container, false);
     }
   }
 

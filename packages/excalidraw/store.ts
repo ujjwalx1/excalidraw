@@ -1,6 +1,6 @@
-import { newElementWith } from ".";
 import { getDefaultAppState } from "./appState";
 import { AppStateChange, ElementsChange } from "./change";
+import { newElementWith } from "./element/mutateElement";
 import { deepCopyElement } from "./element/newElement";
 import { ExcalidrawElement } from "./element/types";
 import { Emitter } from "./emitter";
@@ -15,7 +15,7 @@ const getObservedAppState = (appState: AppState): ObservedAppState => {
     selectedElementIds: appState.selectedElementIds,
     selectedGroupIds: appState.selectedGroupIds,
     editingLinearElement: appState.editingLinearElement,
-    selectedLinearElement: appState.selectedLinearElement, // TODO_UNDO: Think about these two as one level shallow equal is not enough for them (they have new reference even though they shouldn't, sometimes their id does not correspond to selectedElementId)
+    selectedLinearElement: appState.selectedLinearElement,
   };
 };
 
@@ -307,7 +307,6 @@ export class Snapshot {
   }
 
   private detectChangedAppState(observedAppState: ObservedAppState) {
-    // TODO_UNDO: Linear element?
     return !isShallowEqual(this.appState, observedAppState, {
       selectedElementIds: isShallowEqual,
       selectedGroupIds: isShallowEqual,
