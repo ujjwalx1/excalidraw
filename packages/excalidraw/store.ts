@@ -323,7 +323,12 @@ export class Snapshot {
     for (const [id, prevElement] of this.elements.entries()) {
       // clone previous elements, never delete, in case nextElements would be just a subset of previous elements
       // i.e. during collab, persist or whenenever isDeleted elements are cleared
-      clonedElements.set(id, prevElement);
+      if (!nextElements.get(id)) {
+        // when we cannot find the prev element in the next elements, we mark it as deleted
+        clonedElements.set(id, { ...prevElement, isDeleted: true });
+      } else {
+        clonedElements.set(id, prevElement);
+      }
     }
 
     for (const [id, nextElement] of nextElements.entries()) {

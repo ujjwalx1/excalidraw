@@ -837,7 +837,6 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
     }
 
     for (const [id, delta] of this.updated.entries()) {
-      // TODO_UNDO: revisit if this makes sense to always fallback to snapshot
       const existingElement = elements.get(id) ?? snapshot.get(id);
 
       if (existingElement) {
@@ -853,6 +852,7 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
     }
 
     for (const [id, delta] of this.added.entries()) {
+      // Always having the local snapshot as a backup fallback, in cases when we cannot find the element in the elements array
       const existingElement = elements.get(id) ?? snapshot.get(id);
 
       let addedElement = null;
@@ -866,9 +866,7 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
         );
 
         checkForVisibleDifference(existingElement, partial);
-      }
 
-      if (addedElement) {
         const restoredText = ElementsChange.restoreBoundText(
           addedElement,
           elements,
