@@ -265,7 +265,7 @@ export class AppStateChange implements Change<AppState> {
     return new AppStateChange(inversedDelta);
   }
 
-  // TODO_UNDO: we might need to filter out appState related to deleted elements
+  // TODO_UNDO: filter out appState related to deleted elements
   public applyTo(
     appState: Readonly<AppState>,
     elements: ReadonlyMap<string, ExcalidrawElement>,
@@ -788,6 +788,7 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
     elements: Map<string, ExcalidrawElement>,
     snapshot: ReadonlyMap<string, ExcalidrawElement>,
   ): [Map<string, ExcalidrawElement>, boolean] {
+    const visibleDifferenceFlag = { value: false };
     const changedElements = new Map<string, ExcalidrawElement>();
 
     function setElements(
@@ -801,38 +802,27 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
       }
     }
 
-    let containsVisibleDifference = false;
-
-    function checkForVisibleDifference(
-      element: ExcalidrawElement,
-      partial: ElementPartial,
-    ) {
-      if (!containsVisibleDifference) {
-        containsVisibleDifference = ElementsChange.checkForVisibleDifference(
-          element,
-          partial,
-        );
-      }
-    }
-
     for (const [id, delta] of this.removed.entries()) {
       const existingElement = elements.get(id) ?? snapshot.get(id);
 
       if (existingElement) {
-        const [removedElement, partial] = ElementsChange.applyDelta(
+        const removedElement = ElementsChange.applyDelta(
           existingElement,
           delta,
           elements,
+          visibleDifferenceFlag,
         );
 
-        checkForVisibleDifference(existingElement, partial);
-
-        const removedBoundText = ElementsChange.removeBoundText(
+        setElements(
           removedElement,
-          elements,
+          ElementsChange.whenTextContainer(removedElement)?.removeBoundText(
+            removedElement,
+            elements,
+          ),
+          ElementsChange.whenBoundText(removedElement)?.unbindContainer(
+            removedElement,
+          ),
         );
-
-        setElements(removedElement, removedBoundText);
       }
     }
 
@@ -840,13 +830,13 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
       const existingElement = elements.get(id) ?? snapshot.get(id);
 
       if (existingElement) {
-        const [updatedElement, partial] = ElementsChange.applyDelta(
+        const updatedElement = ElementsChange.applyDelta(
           existingElement,
           delta,
           elements,
+          visibleDifferenceFlag,
         );
 
-        checkForVisibleDifference(existingElement, partial);
         setElements(updatedElement);
       }
     }
@@ -855,42 +845,40 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
       // Always having the local snapshot as a backup fallback, in cases when we cannot find the element in the elements array
       const existingElement = elements.get(id) ?? snapshot.get(id);
 
-      let addedElement = null;
-      let partial = null;
-
       if (existingElement) {
-        [addedElement, partial] = ElementsChange.applyDelta(
+        const addedElement = ElementsChange.applyDelta(
           existingElement,
           delta,
           elements,
+          visibleDifferenceFlag,
         );
 
-        checkForVisibleDifference(existingElement, partial);
-
-        const restoredText = ElementsChange.restoreBoundText(
+        setElements(
           addedElement,
-          elements,
+          ElementsChange.whenTextContainer(addedElement)?.restoreBoundText(
+            addedElement,
+            elements,
+          ),
+          ElementsChange.whenBoundText(addedElement)?.restoreContainer(
+            addedElement,
+            elements,
+          ),
         );
-
-        const restoredContainer = ElementsChange.restoreDeletedContainer(
-          addedElement,
-          elements,
-        );
-
-        setElements(addedElement, restoredText, restoredContainer);
       }
     }
 
-    ElementsChange.postfixBindings(changedElements, elements);
+    // TODO: refactor mutations away, so we couln't end up in an incosistent state
+    ElementsChange.redrawTextBoundingBoxes(changedElements, elements);
 
-    return [elements, containsVisibleDifference];
+    return [elements, visibleDifferenceFlag.value];
   }
 
   private static applyDelta(
     element: ExcalidrawElement,
     delta: Delta<ElementPartial>,
     elements: ReadonlyMap<string, ExcalidrawElement>,
-  ): [ExcalidrawElement, ElementPartial] {
+    visibleDifferenceFlag: { value: boolean },
+  ): ExcalidrawElement {
     const { boundElements: removedBoundElements, groupIds: removedGroupIds } =
       delta.from;
 
@@ -904,8 +892,8 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
 
     let nextBoundElements = boundElements;
     if (addedBoundElements?.length || removedBoundElements?.length) {
-      // If we are adding/updating container bound elements with text,
-      // make sure to unbind existing text first, so we don't end up with duplicates.
+      // If we are adding / updating container bound elements with text,
+      // make sure to unbind existing text elements first, so we don't end up with duplicates.
       if (
         addedBoundElements?.length &&
         addedBoundElements.find((x) => x.type === "text")
@@ -924,7 +912,9 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
         ),
       );
 
-      nextBoundElements = mergedBoundElements;
+      nextBoundElements = mergedBoundElements.length
+        ? mergedBoundElements
+        : null;
     }
 
     let nextGroupIds = groupIds;
@@ -947,7 +937,14 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
 
     const updatedElement = newElementWith(element, mergedPartial);
 
-    return [updatedElement, mergedPartial];
+    if (!visibleDifferenceFlag.value) {
+      const containsVisibleDifference =
+        ElementsChange.checkForVisibleDifference(element, mergedPartial);
+
+      visibleDifferenceFlag.value = containsVisibleDifference;
+    }
+
+    return updatedElement;
   }
 
   /**
@@ -1008,21 +1005,44 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
   }
 
   /**
-   * When text bindable container is removed through history, we need to remove bound text.
+   * Helper for related text containers logic.
+   */
+  private static whenTextContainer(element: ExcalidrawElement) {
+    return hasBoundTextElement(element) ? this : undefined;
+  }
+
+  /**
+   * Helper for related bound text logic.
+   */
+  private static whenBoundText(element: ExcalidrawElement) {
+    return isBoundToContainer(element) ? this : undefined;
+  }
+
+  /**
+   * When bound text is removed through history, we need to unbind it from container.
+   */
+  private static unbindContainer(boundText: ExcalidrawElement) {
+    if ((boundText as ExcalidrawTextElement).containerId) {
+      return newElementWith(boundText as ExcalidrawTextElement, {
+        containerId: null,
+      });
+    }
+  }
+
+  /**
+   * When text bindable container is removed through history, we need to remove the bound text.
    */
   private static removeBoundText(
     container: ExcalidrawElement,
     elements: ReadonlyMap<string, ExcalidrawElement>,
   ) {
-    if (!hasBoundTextElement(container)) {
-      return;
-    }
-
-    const boundTextElementId = getBoundTextElementId(container) || "";
-    const boundText = elements.get(boundTextElementId);
+    const boundTextElementId = getBoundTextElementId(container);
+    const boundText = boundTextElementId
+      ? elements.get(boundTextElementId)
+      : undefined;
 
     if (boundText && !boundText.isDeleted) {
-      return newElementWith(boundText as ExcalidrawTextElement, {
+      return newElementWith(boundText, {
         isDeleted: true,
       });
     }
@@ -1032,35 +1052,48 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
    * When text bindable container is added through history, we need to restore it's bound text.
    */
   private static restoreBoundText(
-    element: ExcalidrawElement,
+    container: ExcalidrawElement,
     elements: ReadonlyMap<string, ExcalidrawElement>,
   ) {
-    if (hasBoundTextElement(element)) {
-      const boundTextElementId = getBoundTextElementId(element) || "";
-      const boundText = elements.get(boundTextElementId);
+    const boundTextElementId = getBoundTextElementId(container);
+    const boundText = boundTextElementId
+      ? elements.get(boundTextElementId)
+      : undefined;
 
-      if (boundText && boundText.isDeleted) {
-        return newElementWith(boundText, { isDeleted: false });
+    if (boundText) {
+      const updates: Mutable<ElementUpdate<ExcalidrawTextElement>> = {};
+
+      if ((boundText as ExcalidrawTextElement).containerId !== container.id) {
+        updates.containerId = container.id;
       }
+
+      if (boundText.isDeleted) {
+        updates.isDeleted = false;
+      }
+
+      return newElementWith(boundText, updates);
     }
   }
 
   /**
    * When bound text is added through a history, we need to restore the container if it was deleted.
    */
-  private static restoreDeletedContainer(
-    element: ExcalidrawElement,
+  private static restoreContainer(
+    boundText: ExcalidrawElement,
     elements: ReadonlyMap<string, ExcalidrawElement>,
   ) {
-    if (isBoundToContainer(element)) {
-      const container = elements.get(element.containerId);
+    const { containerId } = boundText as ExcalidrawTextElement;
+    const container = containerId ? elements.get(containerId) : undefined;
 
-      if (container) {
-        if (container.isDeleted) {
-          // Restore the container
-          return newElementWith(container, { isDeleted: false });
-        }
+    if (container) {
+      if (container.isDeleted) {
+        return newElementWith(container, { isDeleted: false });
       }
+    } else if ((boundText as ExcalidrawTextElement).containerId) {
+      // Unbind when we cannot find the container
+      return newElementWith(boundText as ExcalidrawTextElement, {
+        containerId: null,
+      });
     }
   }
 
@@ -1072,7 +1105,7 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
    *
    * Note: performs mutations.
    */
-  private static postfixBindings(
+  private static redrawTextBoundingBoxes(
     changedElements: ReadonlyMap<string, ExcalidrawElement>,
     elements: ReadonlyMap<string, ExcalidrawElement>,
   ) {
@@ -1083,8 +1116,10 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
 
     for (const element of changedElements.values()) {
       if (hasBoundTextElement(element)) {
-        const boundTextElementId = getBoundTextElementId(element) || "";
-        const boundText = elements.get(boundTextElementId);
+        const boundTextElementId = getBoundTextElementId(element);
+        const boundText = boundTextElementId
+          ? elements.get(boundTextElementId)
+          : undefined;
 
         if (boundText) {
           containerTextMapping.set(element.id, {
@@ -1105,57 +1140,14 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
     }
 
     for (const { container, boundText } of containerTextMapping.values()) {
-      this.resyncTextBindings(boundText, container, elements);
+      if (container.isDeleted || boundText.isDeleted) {
+        // Skip on deleted container or bound text, sa it doesn't result in visible changes so we don't need to redraw
+        continue;
+      }
+      // this.resyncTextBindings(boundText, container, elements);
+      // TODO: this is a huge bottleneck which can take up to 96% of undo / redo computation time
+      // TODO: I might not need to redraw deletions, I could do it on add / update only
       redrawTextBoundingBox(boundText, container, false);
-    }
-  }
-
-  private static resyncTextBindings(
-    boundText: ExcalidrawTextElement,
-    container: ExcalidrawElement,
-    elements: ReadonlyMap<string, ExcalidrawElement>,
-  ) {
-    if (
-      !container.boundElements ||
-      !container.boundElements.find((x) => x.id === boundText.id)
-    ) {
-      const nextBoundElements = ElementsChange.unbindExistingTextElements(
-        container.boundElements ?? [],
-        elements,
-      );
-
-      mutateElement(
-        container,
-        {
-          boundElements: (nextBoundElements ?? []).concat({
-            type: "text",
-            id: boundText.id,
-          }),
-        },
-        false,
-      );
-    }
-
-    if (boundText.containerId !== container.id) {
-      mutateElement(boundText, { containerId: container.id }, false);
-    }
-
-    // Handle a special case when one of them is deleted,
-    // we do wait for sync first (to be sure the binding is bidirectional),
-    // then we safely unbind it from both elements.
-    if (boundText.isDeleted !== container.isDeleted) {
-      const nextBoundElements = ElementsChange.unbindExistingTextElements(
-        container.boundElements ?? [],
-        elements,
-      );
-
-      mutateElement(
-        container,
-        {
-          boundElements: nextBoundElements,
-        },
-        false,
-      );
     }
   }
 
@@ -1223,7 +1215,6 @@ export class ElementsChange implements Change<Map<string, ExcalidrawElement>> {
   private static stripIrrelevantProps(
     partial: Partial<ExcalidrawElement>,
   ): ElementPartial {
-    // TODO: add more typesafety
     const { id, updated, version, versionNonce, seed, ...strippedPartial } =
       partial;
 

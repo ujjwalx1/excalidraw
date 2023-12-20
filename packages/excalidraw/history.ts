@@ -3,7 +3,6 @@ import { ExcalidrawElement } from "./element/types";
 import { Snapshot } from "./store";
 import { AppState } from "./types";
 
-// TODO_UNDO: think about limiting the depth of stack
 export class History {
   private readonly undoStack: HistoryEntry[] = [];
   private readonly redoStack: HistoryEntry[] = [];
@@ -76,8 +75,6 @@ export class History {
       [nextElements, nextAppState, containsVisibleChange] =
         historyEntry.applyTo(nextElements, nextAppState, snapshot);
 
-      // TODO_UNDO: Be very careful here, as we could accidentaly iterate through the whole stack
-      // TODO_UNDO: Better to inverse this condition to be safer (but slower) i.e. noVisibleChange -> continue
       if (containsVisibleChange) {
         break;
       }

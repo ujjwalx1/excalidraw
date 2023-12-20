@@ -2051,7 +2051,7 @@ class App extends React.Component<AppProps, AppState> {
         if (actionResult.storeAction === StoreAction.UPDATE) {
           this.store.shouldUpdateSnapshot();
         } else if (actionResult.storeAction === StoreAction.CAPTURE) {
-          this.store.shouldCalculateIncrement();
+          this.store.shouldCaptureIncrement();
         }
       }
 
@@ -2066,7 +2066,7 @@ class App extends React.Component<AppProps, AppState> {
         if (actionResult.storeAction === StoreAction.UPDATE) {
           this.store.shouldUpdateSnapshot();
         } else if (actionResult.storeAction === StoreAction.CAPTURE) {
-          this.store.shouldCalculateIncrement();
+          this.store.shouldCaptureIncrement();
         }
 
         let viewModeEnabled = actionResult?.appState?.viewModeEnabled || false;
@@ -3071,7 +3071,7 @@ class App extends React.Component<AppProps, AppState> {
       this.files = { ...this.files, ...opts.files };
     }
 
-    this.store.shouldCalculateIncrement();
+    this.store.shouldCaptureIncrement();
 
     const nextElementsToSelect =
       excludeElementsInFramesFromSelection(newElements);
@@ -3312,7 +3312,7 @@ class App extends React.Component<AppProps, AppState> {
       PLAIN_PASTE_TOAST_SHOWN = true;
     }
 
-    this.store.shouldCalculateIncrement();
+    this.store.shouldCaptureIncrement();
   }
 
   setAppState: React.Component<any, AppState>["setState"] = (
@@ -3583,7 +3583,7 @@ class App extends React.Component<AppProps, AppState> {
       commitToStore?: SceneData["commitToStore"];
     }) => {
       if (sceneData.commitToStore) {
-        this.store.shouldCalculateIncrement();
+        this.store.shouldCaptureIncrement();
       }
 
       if (sceneData.elements || sceneData.appState) {
@@ -3829,7 +3829,7 @@ class App extends React.Component<AppProps, AppState> {
                 this.state.editingLinearElement.elementId !==
                   selectedElements[0].id
               ) {
-                this.store.shouldCalculateIncrement();
+                this.store.shouldCaptureIncrement();
                 this.setState({
                   editingLinearElement: new LinearElementEditor(
                     selectedElement,
@@ -4221,7 +4221,7 @@ class App extends React.Component<AppProps, AppState> {
           ]);
         }
         if (!isDeleted || isExistingElement) {
-          this.store.shouldCalculateIncrement();
+          this.store.shouldCaptureIncrement();
         }
 
         this.setState({
@@ -4513,7 +4513,7 @@ class App extends React.Component<AppProps, AppState> {
         (!this.state.editingLinearElement ||
           this.state.editingLinearElement.elementId !== selectedElements[0].id)
       ) {
-        this.store.shouldCalculateIncrement();
+        this.store.shouldCaptureIncrement();
         this.setState({
           editingLinearElement: new LinearElementEditor(
             selectedElements[0],
@@ -5330,7 +5330,6 @@ class App extends React.Component<AppProps, AppState> {
       this.state.draggingElement.type === "freedraw"
     ) {
       const element = this.state.draggingElement as ExcalidrawFreeDrawElement;
-      // TODO_UNDO: This should probably update the snapshot but shouldn't be committed (-> does not need to be undoable -> need for updateSnapshot flag)
       this.updateScene({
         ...(element.points.length < 10
           ? {
@@ -7499,7 +7498,7 @@ class App extends React.Component<AppProps, AppState> {
 
       if (isLinearElement(draggingElement)) {
         if (draggingElement!.points.length > 1) {
-          this.store.shouldCalculateIncrement();
+          this.store.shouldCaptureIncrement();
         }
         const pointerCoords = viewportCoordsToSceneCoords(
           childEvent,
@@ -7734,7 +7733,7 @@ class App extends React.Component<AppProps, AppState> {
       }
 
       if (resizingElement) {
-        this.store.shouldCalculateIncrement();
+        this.store.shouldCaptureIncrement();
       }
 
       if (resizingElement && isInvisiblySmallElement(resizingElement)) {
@@ -8041,7 +8040,7 @@ class App extends React.Component<AppProps, AppState> {
           this.state.selectedElementIds,
         )
       ) {
-        this.store.shouldCalculateIncrement();
+        this.store.shouldCaptureIncrement();
       }
 
       if (pointerDownState.drag.hasOccurred || isResizing || isRotating) {
@@ -8147,7 +8146,7 @@ class App extends React.Component<AppProps, AppState> {
       return ele;
     });
 
-    this.store.shouldCalculateIncrement();
+    this.store.shouldCaptureIncrement();
     this.scene.replaceAllElements(elements);
   };
 

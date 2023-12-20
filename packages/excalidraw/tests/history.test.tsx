@@ -1232,6 +1232,23 @@ describe("history", () => {
           ],
         });
 
+        expect(h.elements).toEqual([
+          expect.objectContaining({
+            id: container.id,
+            boundElements: [{ id: text.id, type: "text" }],
+            x: 10,
+            y: 10,
+            angle: 0,
+            isDeleted: false,
+          }),
+          expect.objectContaining({
+            ...textProps,
+            containerId: container.id,
+            id: text.id,
+            isDeleted: false,
+          }),
+        ]);
+
         Keyboard.redo();
         expect(API.getUndoStack().length).toBe(1);
         expect(API.getRedoStack().length).toBe(0);
@@ -1245,9 +1262,7 @@ describe("history", () => {
             isDeleted: true,
           }),
           expect.objectContaining({
-            x: 205,
-            y: 205,
-            angle: 180,
+            ...textProps, // we don't expect the text props to get updated when it's deleted
             containerId: container.id,
             id: text.id,
             isDeleted: true,
@@ -1464,7 +1479,10 @@ describe("history", () => {
         excalidrawAPI.updateScene({
           elements: [
             newElementWith(h.elements[0], {
-              boundElements: [{ id: text.id, type: "text" }],
+              boundElements: [
+                { id: "any", type: "arrow" }, // adding random arrow to see if it will be preserved
+                { id: text.id, type: "text" },
+              ],
             }),
             newElementWith(h.elements[1] as ExcalidrawTextElement, {
               containerId: null,
@@ -1479,7 +1497,10 @@ describe("history", () => {
         expect(h.elements).toEqual([
           expect.objectContaining({
             id: container.id,
-            boundElements: [{ id: text.id, type: "text" }],
+            boundElements: [
+              { id: "any", type: "arrow" },
+              { id: text.id, type: "text" },
+            ],
             isDeleted: false,
           }),
           expect.objectContaining({
@@ -1501,7 +1522,10 @@ describe("history", () => {
         expect(h.elements).toEqual([
           expect.objectContaining({
             id: container.id,
-            boundElements: [{ id: localText.id, type: "text" }],
+            boundElements: [
+              { id: "any", type: "arrow" },
+              { id: localText.id, type: "text" },
+            ],
             isDeleted: false,
           }),
           expect.objectContaining({
@@ -1570,7 +1594,7 @@ describe("history", () => {
         expect(h.elements).toEqual([
           expect.objectContaining({
             id: container.id,
-            boundElements: null,
+            boundElements: [{ id: text.id, type: "text" }],
             x: 10,
             y: 10,
             angle: 0,
@@ -1578,7 +1602,7 @@ describe("history", () => {
           }),
           expect.objectContaining({
             ...textProps,
-            containerId: null,
+            containerId: container.id,
             id: text.id,
             isDeleted: true,
           }),

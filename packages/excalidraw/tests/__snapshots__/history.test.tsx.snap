@@ -363,7 +363,7 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
 
 exports[`history > multiplayer undo/redo > conflicts in bound text elements and containers > should remove remotely added bound text when it's container is removed through the history > [end of test] element 1 1`] = `
 {
-  "angle": 180,
+  "angle": 0,
   "backgroundColor": "transparent",
   "baseline": 0,
   "boundElements": null,
@@ -373,7 +373,7 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
   "fontSize": 20,
   "frameId": null,
   "groupIds": [],
-  "height": 25,
+  "height": 100,
   "id": "id42",
   "isDeleted": true,
   "lineHeight": 1.25,
@@ -392,11 +392,11 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
   "textAlign": "left",
   "type": "text",
   "updated": 1,
-  "version": 3,
+  "version": 2,
   "verticalAlign": "top",
-  "width": 80,
-  "x": 205,
-  "y": 205,
+  "width": 100,
+  "x": 15,
+  "y": 15,
 }
 `;
 
@@ -779,7 +779,7 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
   "strokeWidth": 2,
   "type": "rectangle",
   "updated": 1,
-  "version": 11,
+  "version": 7,
   "width": 100,
   "x": 200,
   "y": 200,
@@ -817,7 +817,7 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
   "textAlign": "left",
   "type": "text",
   "updated": 1,
-  "version": 8,
+  "version": 7,
   "verticalAlign": "top",
   "width": 80,
   "x": 205,
@@ -1012,6 +1012,10 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
   "backgroundColor": "transparent",
   "boundElements": [
     {
+      "id": "any",
+      "type": "arrow",
+    },
+    {
       "id": "id49",
       "type": "text",
     },
@@ -1034,7 +1038,7 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
   "strokeWidth": 2,
   "type": "rectangle",
   "updated": 1,
-  "version": 7,
+  "version": 5,
   "width": 100,
   "x": 10,
   "y": 10,
@@ -1072,7 +1076,7 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
   "textAlign": "left",
   "type": "text",
   "updated": 1,
-  "version": 6,
+  "version": 5,
   "verticalAlign": "top",
   "width": 30,
   "x": 15,
@@ -1328,7 +1332,7 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
   "strokeWidth": 2,
   "type": "rectangle",
   "updated": 1,
-  "version": 8,
+  "version": 6,
   "width": 100,
   "x": 50,
   "y": 50,
@@ -1366,7 +1370,7 @@ exports[`history > multiplayer undo/redo > conflicts in bound text elements and 
   "textAlign": "left",
   "type": "text",
   "updated": 1,
-  "version": 6,
+  "version": 5,
   "verticalAlign": "top",
   "width": 80,
   "x": 55,

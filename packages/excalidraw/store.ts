@@ -1,3 +1,4 @@
+import { newElementWith } from ".";
 import { getDefaultAppState } from "./appState";
 import { AppStateChange, ElementsChange } from "./change";
 import { deepCopyElement } from "./element/newElement";
@@ -42,7 +43,7 @@ export interface IStore {
   /**
    * Use to schedule calculation of a store increment on a next component update.
    */
-  shouldCalculateIncrement(): void;
+  shouldCaptureIncrement(): void;
 
   /**
    * Capture changes to the @param elements and @param appState by calculating changes (based on a snapshot) and emitting resulting changes as a store increment.
@@ -75,10 +76,10 @@ export interface IStore {
   destroy(): void;
 
   /**
-   * Filters out yet uncomitted local elements, which are part of in progress local async actions, based on what we have in snapshot.
+   * Filters out yet uncomitted local elements, which are part of in progress async actions, based on what we have in snapshot.
    *
    * This is necessary on updates in which we receive reconcilled-like elements, already containing elements
-   * which were not yet captured by the store. Once we will be exchanging just store increments this won't be necessary.
+   * which were not yet captured by the store. Once we will be exchanging just store increments this will be deprecated.
    */
   ignoreUncomittedElements(
     prevElements: Map<string, ExcalidrawElement>,
@@ -111,11 +112,10 @@ export class Store implements IStore {
   };
 
   // Suspicious that this is called so many places. Seems error-prone.
-  public shouldCalculateIncrement = () => {
+  public shouldCaptureIncrement = () => {
     this.calculatingIncrement = true;
   };
 
-  // TODO_UNDO: we could alread commit to the store
   public capture = (
     elements: Map<string, ExcalidrawElement>,
     appState: AppState,
@@ -322,10 +322,13 @@ export class Snapshot {
 
     for (const [id, prevElement] of this.elements.entries()) {
       // clone previous elements, never delete, in case nextElements would be just a subset of previous elements
-      // i.e. during collab, persist or whenenever isDeleted elements are cleared
+      // i.e. during collab, persist or whenenever isDeleted elements get cleared
       if (!nextElements.get(id)) {
         // when we cannot find the prev element in the next elements, we mark it as deleted
-        clonedElements.set(id, { ...prevElement, isDeleted: true });
+        clonedElements.set(
+          id,
+          newElementWith(prevElement, { isDeleted: true }),
+        );
       } else {
         clonedElements.set(id, prevElement);
       }

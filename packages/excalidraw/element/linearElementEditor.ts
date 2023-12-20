@@ -654,7 +654,7 @@ export class LinearElementEditor {
         });
         ret.didAddPoint = true;
       }
-      store.shouldCalculateIncrement();
+      store.shouldCaptureIncrement();
       ret.linearElementEditor = {
         ...linearElementEditor,
         pointerDownState: {
